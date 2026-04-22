@@ -1,0 +1,88 @@
+.container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #000212;
+    font-family: 'Rubik', sans-serif;
+  }
+  
+  .card {
+    background-color: #181430;
+    padding: 2.5rem;
+    border-radius: 1.25rem;
+    width: 90%;
+    max-width: 420px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  }
+  
+  .title {
+    color: #ffffff;
+    font-size: 2.25rem;
+    font-weight: 700;
+    margin-bottom: 2rem;
+    text-align: center;
+  }
+  
+  .inputGroup {
+    margin-bottom: 1.5rem;
+  }
+  
+  .label {
+    display: block;
+    color: #ddd7ea;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+  }
+  
+  .input {
+    width: 100%;
+    padding: 0.8rem;
+    border-radius: 0.6rem;
+    border: 1px solid rgba(117, 76, 190, 0.4);
+    background: #000212;
+    color: #fff;
+    outline: none;
+    transition: border 0.3s ease;
+  }
+  
+  .input:focus {
+    border-color: #754cbe;
+  }
+  
+  .loginButton {
+    width: 100%;
+    padding: 0.8rem;
+    background-color: #754cbe;
+    color: white;
+    border: none;
+    border-radius: 0.6rem;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 1rem;
+    transition: transform 0.1s active;
+  }
+  
+  .loginButton:hover {
+    background-color: #633fb0;
+  }
+  .googleButton {
+    width: 100%;
+    padding: 0.8rem;
+    background-color: transparent;
+    color: #ddd7ea;
+    border: 1px solid rgba(221, 215, 234, 0.2);
+    border-radius: 0.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 1rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background 0.3s;
+  }
+  
+  .googleButton:hover {
+    background-color: rgba(221, 215, 234, 0.05);
+  }
