@@ -1,0 +1,220 @@
+.page {
+  min-height: 100vh;
+  background: #000212;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem 1rem;
+  font-family: "Rubik", sans-serif;
+  color: #ddd7ea;
+}
+
+.card {
+  width: 100%;
+  max-width: 860px;
+  background: #181430;
+  border: 1px solid rgba(117, 76, 190, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  padding: 2rem;
+}
+
+.header {
+  margin-bottom: 1.75rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.subtitle {
+  margin: 0.65rem 0 0;
+  color: rgba(221, 215, 234, 0.78);
+  font-size: 0.95rem;
+}
+
+.form {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.section {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1.2rem;
+  border: 1px solid rgba(221, 215, 234, 0.15);
+  border-radius: 12px;
+  background: rgba(0, 2, 18, 0.35);
+}
+
+.orgGrid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.sectionTitle {
+  margin: 0 0 0.2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #ddd7ea;
+}
+
+.label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: rgba(221, 215, 234, 0.9);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  border: 1px solid rgba(117, 76, 190, 0.3);
+  border-radius: 10px;
+  background: rgba(0, 2, 18, 0.75);
+  color: #ddd7ea;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: rgba(221, 215, 234, 0.4);
+}
+
+.input:focus,
+.textarea:focus {
+  border-color: #9b7de2;
+  box-shadow: 0 0 0 3px rgba(117, 76, 190, 0.25);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.countryField {
+  position: relative;
+}
+
+.countryInputWrapper {
+  position: relative;
+}
+
+.countryFlag {
+  position: absolute;
+  left: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  pointer-events: none;
+}
+
+.countryInputWrapper .input {
+  padding-left: 2.4rem;
+  padding-right: 2.4rem;
+}
+
+.dropdownToggle {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: rgba(221, 215, 234, 0.8);
+  font-size: 0.75rem;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.dropdownToggle:hover {
+  background: rgba(117, 76, 190, 0.18);
+}
+
+.countryList {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0.3rem;
+  max-height: 230px;
+  overflow-y: auto;
+  border: 1px solid rgba(117, 76, 190, 0.5);
+  border-radius: 10px;
+  background: #120f27;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.countryOption {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #ddd7ea;
+  text-align: left;
+  padding: 0.62rem 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.countryOption:hover {
+  background: rgba(117, 76, 190, 0.25);
+}
+
+.countryOptionFlag {
+  font-size: 1rem;
+}
+
+.noResults {
+  padding: 0.7rem;
+  color: rgba(221, 215, 234, 0.7);
+  font-size: 0.9rem;
+}
+
+.optional {
+  color: rgba(221, 215, 234, 0.65);
+  font-weight: 400;
+}
+
+.submitButton {
+  border: none;
+  border-radius: 10px;
+  background: #754cbe;
+  color: #ffffff;
+  font-size: 0.98rem;
+  font-weight: 600;
+  padding: 0.82rem 1rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.15s ease;
+}
+
+.submitButton:hover {
+  background: #643dac;
+}
+
+.submitButton:active {
+  transform: translateY(1px);
+}
+
+@media (min-width: 900px) {
+  .orgGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fullWidth {
+    grid-column: 1 / -1;
+  }
+}
