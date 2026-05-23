@@ -1,5 +1,4 @@
 import '../styles/bootstrap.min.css';
-import '../styles/countdown.css';
 import { Poppins } from 'next/font/google';
 
 const poppins = Poppins({

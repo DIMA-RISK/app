@@ -19,6 +19,13 @@
   padding: 2rem;
 }
 
+.logo {
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1.25rem;
+}
+
 .header {
   margin-bottom: 1.75rem;
 }
@@ -206,6 +213,32 @@
 
 .submitButton:active {
   transform: translateY(1px);
+}
+
+.submitButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.errorMsg {
+  color: #f87171;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.loginLink {
+  text-align: center;
+  font-size: 0.85rem;
+  color: rgba(221, 215, 234, 0.55);
+}
+
+.link {
+  color: #9b7de2;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
 }
 
 @media (min-width: 900px) {
