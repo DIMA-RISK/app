@@ -1,0 +1,268 @@
+"use server";
+
+import { createAdminClient } from "../../utils/supabase/admin";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { randomUUID } from "crypto";
+
+interface AnswerEntry {
+  session_id: string;
+  question_id: number;
+  framework_id: string;
+  response: "yes" | "no" | "partial" | "na";
+}
+
+interface OrgProfile {
+  patient_records_count: number;
+  data_storage_gb: number;
+  has_health_data: boolean;
+  has_financial_data: boolean;
+  has_pii_data: boolean;
+  data_sensitivity_level: number;
+  vendor_count: number;
+  max_vendor_access_level: number;
+  vendor_data_share_pct: number;
+}
+
+export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: OrgProfile) {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (toSet) => toSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+      },
+    }
+  );
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const admin = createAdminClient();
+
+  // 1. Save org profile data
+  const { error: orgError } = await admin
+    .from("organizations")
+    .update({
+      patient_records_count: orgProfile.patient_records_count,
+      data_storage_gb: orgProfile.data_storage_gb,
+      has_health_data: orgProfile.has_health_data,
+      has_financial_data: orgProfile.has_financial_data,
+      has_pii_data: orgProfile.has_pii_data,
+      data_sensitivity_level: orgProfile.data_sensitivity_level,
+      vendor_count: orgProfile.vendor_count,
+      max_vendor_access_level: orgProfile.max_vendor_access_level,
+      vendor_data_share_pct: orgProfile.vendor_data_share_pct,
+    })
+    .eq("user_id", user.id);
+
+  if (orgError) return { error: orgError.message };
+
+  // 2. Save questionnaire answers
+  if (entries.length > 0) {
+    const rows = entries.map((e) => ({
+      session_id: e.session_id,
+      question_id: e.question_id,
+      framework_id: e.framework_id,
+      response: e.response,
+    }));
+
+    const { error: insertError } = await admin
+      .from("questionnaire_responses")
+      .upsert(rows, { onConflict: "session_id,question_id,framework_id" });
+
+    if (insertError) return { error: insertError.message };
+  }
+
+  // 3. Run scoring functions using the session_id
+  if (entries.length > 0) {
+    const sessionId = entries[0].session_id;
+    const frameworkId = entries[0].framework_id;
+
+    await admin.rpc("calculate_risk_score", { p_session_id: sessionId });
+    await admin.rpc("calculate_financial_impact", { p_session_id: sessionId });
+
+    // 3b. Generate remediation roadmap from failed / partial responses
+    const failedEntries = entries.filter(
+      (e) => e.response === "no" || e.response === "partial",
+    );
+
+    if (failedEntries.length > 0) {
+      const failedIds = failedEntries.map((e) => e.question_id);
+      const qMap = new Map<number, { text: string; statement: string | null }>();
+
+      if (frameworkId === "pipeda") {
+        const { data: pq } = await admin
+          .from("pipeda_questions")
+          .select("question_id, business_question, compliance_statement")
+          .in("question_id", failedIds);
+
+        (pq ?? []).forEach((q) =>
+          qMap.set(q.question_id, {
+            text: q.business_question,
+            statement: q.compliance_statement ?? null,
+          }),
+        );
+      } else if (frameworkId === "hipaa") {
+        const { data: hq } = await admin
+          .from("HIPAA_Questions")
+          .select("question_id, Question, compliance_statement")
+          .in("question_id", failedIds);
+
+        (hq ?? []).forEach((q) =>
+          qMap.set(q.question_id, {
+            text: q.Question,
+            statement: q.compliance_statement ?? null,
+          }),
+        );
+      }
+
+      const roadmapRows = failedEntries.flatMap((e) => {
+        const q = qMap.get(e.question_id);
+        if (!q) return [];
+        return [
+          {
+            session_id: sessionId,
+            user_id: user.id,
+            title: q.text,
+            description: q.statement,
+            priority: e.response === "no" ? "high" : "medium",
+            effort: "medium",
+            status: "open",
+            category: "administrative",
+          },
+        ];
+      });
+
+      if (roadmapRows.length > 0) {
+        await admin.from("remediation_roadmap").delete().eq("user_id", user.id);
+        await admin.from("remediation_roadmap").insert(roadmapRows);
+      }
+    }
+  } else {
+    // No questionnaire — still try to find session and score with org data only
+    const { data: session } = await admin
+      .from("assessment_sessions")
+      .select("id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (session) {
+      await admin.rpc("calculate_risk_score", { p_session_id: session.id });
+      await admin.rpc("calculate_financial_impact", { p_session_id: session.id });
+    }
+  }
+
+  // 4. Mark onboarding complete
+  const { error: updateError } = await admin
+    .from("organizations")
+    .update({ onboarding_completed: true })
+    .eq("user_id", user.id);
+
+  if (updateError) return { error: updateError.message };
+
+  return { error: null };
+}
+
+async function getAuthedUser() {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (toSet) => toSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+      },
+    }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+export async function queueScanJob() {
+  const user = await getAuthedUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const admin = createAdminClient();
+
+  const { data: org } = await admin
+    .from("organizations")
+    .select("org_uid, org_ip")
+    .eq("user_id", user.id)
+    .single();
+
+  if (!org?.org_ip) return { error: null }; // no IP configured — skip scan silently
+  if (!org?.org_uid) return { error: null }; // org_uid not set yet — skip
+
+  // Avoid duplicate queued jobs for the same org
+  const { data: existing } = await admin
+    .from("software_queue")
+    .select("id")
+    .eq("org_uid", org.org_uid)
+    .in("status", ["queued", "running"])
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return { error: null }; // already queued
+
+  const { error } = await admin.from("software_queue").insert({
+    job_id: randomUUID(),
+    org_uid: org.org_uid,
+    org_ip: org.org_ip,
+    status: "queued",
+  });
+
+  return { error: error?.message ?? null };
+}
+
+export async function checkScanStatus(): Promise<{ done: boolean; error: string | null }> {
+  const user = await getAuthedUser();
+  if (!user) return { done: false, error: "Not authenticated" };
+
+  const admin = createAdminClient();
+
+  const { data: org } = await admin
+    .from("organizations")
+    .select("org_uid, org_ip")
+    .eq("user_id", user.id)
+    .single();
+
+  // No scan was queued if org_uid or org_ip is missing — let the user proceed
+  if (!org?.org_uid || !org?.org_ip) return { done: true, error: null };
+
+  const { data: result } = await admin
+    .from("fact_software_results")
+    .select("job_id")
+    .eq("org_uid", org.org_uid)
+    .limit(1)
+    .maybeSingle();
+
+  return { done: !!result, error: null };
+}
+
+export async function rescoreWithScan() {
+  const user = await getAuthedUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const admin = createAdminClient();
+
+  const { data: session } = await admin
+    .from("assessment_sessions")
+    .select("id")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!session) return { error: null };
+
+  await admin.rpc("calculate_risk_score", { p_session_id: session.id });
+  await admin.rpc("calculate_financial_impact", { p_session_id: session.id });
+
+  return { error: null };
+}

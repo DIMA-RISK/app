@@ -137,7 +137,7 @@
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
   padding: 2.25rem;
   width: 100%;
-  max-width: 620px;
+  max-width: 740px;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -184,6 +184,66 @@
 .legalSection strong {
   color: #ddd7ea;
   font-weight: 600;
+}
+
+.legalWarning {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  font-size: 0.82rem;
+  color: #fbbf24;
+  line-height: 1.6;
+}
+
+.legalWarning strong {
+  color: #fcd34d;
+  font-weight: 700;
+}
+
+.legalMeta {
+  font-size: 0.75rem;
+  color: rgba(221, 215, 234, 0.35);
+  margin: 0;
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+.legalSubSection {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #c4a8f0;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.legalTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+
+.legalTable th {
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(221, 215, 234, 0.45);
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid rgba(117, 76, 190, 0.2);
+}
+
+.legalTable td {
+  padding: 0.45rem 0.6rem;
+  color: rgba(221, 215, 234, 0.72);
+  vertical-align: top;
+  border-bottom: 1px solid rgba(117, 76, 190, 0.08);
+  line-height: 1.5;
+}
+
+.legalTable tr:last-child td {
+  border-bottom: none;
 }
 
 /* Checkbox */

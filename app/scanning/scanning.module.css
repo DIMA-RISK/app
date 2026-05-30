@@ -1,0 +1,192 @@
+.page {
+  min-height: 100vh;
+  background: #000212;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem 1rem;
+  font-family: "Rubik", sans-serif;
+  color: #ddd7ea;
+}
+
+.card {
+  width: 100%;
+  max-width: 560px;
+  background: #181430;
+  border: 1px solid rgba(117, 76, 190, 0.35);
+  border-radius: 20px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  text-align: center;
+}
+
+.logo {
+  width: 44px;
+  height: 44px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #ddd7ea;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.88rem;
+  color: rgba(221, 215, 234, 0.55);
+  line-height: 1.6;
+  max-width: 420px;
+}
+
+/* Animated scan orb */
+.scanBox {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.5rem 0;
+}
+
+.pulseRing {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(117, 76, 190, 0.5);
+  animation: pulse 2s ease-out infinite;
+}
+
+.pulseRing2 {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(117, 76, 190, 0.3);
+  animation: pulse 2s ease-out infinite 0.7s;
+}
+
+@keyframes pulse {
+  0%   { transform: scale(0.85); opacity: 0.8; }
+  100% { transform: scale(1.5);  opacity: 0; }
+}
+
+.scanCore {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(117, 76, 190, 0.15);
+  border: 1.5px solid rgba(117, 76, 190, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9b7de2;
+  animation: rotate 4s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Phase text */
+.phaseWrap {
+  min-height: 24px;
+}
+
+.phaseText {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #9b7de2;
+  font-weight: 500;
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Progress bar */
+.progressWrap {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 5px;
+  background: rgba(117, 76, 190, 0.15);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #754cbe, #9b7de2);
+  border-radius: 99px;
+}
+
+.progressPct {
+  font-size: 0.78rem;
+  color: rgba(221, 215, 234, 0.5);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Check list */
+.findings {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 2, 18, 0.4);
+  border: 1px solid rgba(117, 76, 190, 0.12);
+  border-radius: 12px;
+}
+
+.findingRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: rgba(221, 215, 234, 0.3);
+  transition: color 0.3s ease;
+}
+
+.findingActive {
+  color: #9b7de2;
+}
+
+.findingDone {
+  color: #4ade80;
+}
+
+.findingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.findingLabel {
+  font-size: 0.8rem;
+}
+
+/* Footer note */
+.note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: rgba(221, 215, 234, 0.3);
+  line-height: 1.5;
+  max-width: 380px;
+}

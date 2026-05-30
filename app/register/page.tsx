@@ -78,6 +78,7 @@ export default function RegisterPage() {
       address: data.get("address") as string,
       org_country: selectedCountry.value,
       dba_name: data.get("adminName") as string,
+      org_ip: data.get("orgIp") as string,
     });
 
     if (err) {
@@ -130,14 +131,31 @@ export default function RegisterPage() {
 
               <div className={styles.field}>
                 <label className={styles.label} htmlFor="industry">Industry</label>
-                <input id="industry" name="industry" type="text"
-                  className={styles.input} placeholder="Technology" required />
+                <select id="industry" name="industry" className={styles.select} required defaultValue="">
+                  <option value="" disabled>Select your industry</option>
+                  <option value="Healthcare">Healthcare</option>
+                  <option value="Healthtech">Healthtech</option>
+                  <option value="Education">Education</option>
+                  <option value="Fintech">Fintech</option>
+                  <option value="Finance">Finance</option>
+                </select>
               </div>
 
               <div className={`${styles.field} ${styles.fullWidth}`}>
                 <label className={styles.label} htmlFor="address">Address</label>
                 <textarea id="address" name="address" className={styles.textarea}
                   placeholder="123 Business Avenue, Suite 400" required />
+              </div>
+
+              <div className={`${styles.field} ${styles.fullWidth}`}>
+                <label className={styles.label} htmlFor="orgIp">
+                  Network IP Address <span className={styles.optional}>(for security scan)</span>
+                </label>
+                <input id="orgIp" name="orgIp" type="text"
+                  className={styles.input} placeholder="e.g. 203.0.113.42" />
+                <p className={styles.fieldHint}>
+                  The public IP of your main office network. DIMA will scan it during onboarding to assess your technical controls.
+                </p>
               </div>
 
               <div className={`${styles.field} ${styles.fullWidth}`}>

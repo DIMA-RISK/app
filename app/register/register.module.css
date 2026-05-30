@@ -81,7 +81,8 @@
 }
 
 .input,
-.textarea {
+.textarea,
+.select {
   width: 100%;
   border: 1px solid rgba(117, 76, 190, 0.3);
   border-radius: 10px;
@@ -91,6 +92,20 @@
   font-size: 0.95rem;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.select {
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='rgba(221,215,234,0.5)' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+  padding-right: 2.4rem;
+}
+
+.select option {
+  background: #120f27;
+  color: #ddd7ea;
 }
 
 .input::placeholder,
@@ -193,6 +208,13 @@
 .optional {
   color: rgba(221, 215, 234, 0.65);
   font-weight: 400;
+}
+
+.fieldHint {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: rgba(221, 215, 234, 0.4);
+  line-height: 1.4;
 }
 
 .submitButton {

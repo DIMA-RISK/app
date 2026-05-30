@@ -1,0 +1,518 @@
+.page {
+  min-height: 100vh;
+  background: #000212;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 2.5rem 1rem;
+  font-family: "Rubik", sans-serif;
+  color: #ddd7ea;
+}
+
+.card {
+  width: 100%;
+  max-width: 820px;
+  background: #181430;
+  border: 1px solid rgba(117, 76, 190, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+}
+
+.logo {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.headerText {
+  flex: 1;
+}
+
+.title {
+  margin: 0 0 0.3rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #ddd7ea;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(221, 215, 234, 0.65);
+  line-height: 1.5;
+}
+
+/* Progress */
+.progressSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.progressInfo {
+  display: flex;
+  justify-content: space-between;
+}
+
+.progressLabel {
+  font-size: 0.78rem;
+  color: rgba(221, 215, 234, 0.5);
+}
+
+.progressTrack {
+  height: 5px;
+  background: rgba(117, 76, 190, 0.15);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #754cbe, #9b7de2);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+/* Step tabs */
+.stepTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.stepTab {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(117, 76, 190, 0.2);
+  border-radius: 8px;
+  background: rgba(0, 2, 18, 0.4);
+  color: rgba(221, 215, 234, 0.45);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.stepTab:hover {
+  border-color: rgba(117, 76, 190, 0.45);
+  color: rgba(221, 215, 234, 0.75);
+}
+
+.stepTabActive {
+  border-color: #754cbe;
+  background: rgba(117, 76, 190, 0.18);
+  color: #ddd7ea;
+  font-weight: 600;
+}
+
+.stepTabDone {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+}
+
+.stepNum {
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.stepName {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkIcon {
+  font-size: 0.7rem;
+  color: #4ade80;
+}
+
+/* Domain section */
+.domainSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.domainTitle {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ddd7ea;
+}
+
+.domainHint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: rgba(221, 215, 234, 0.4);
+}
+
+/* Question cards */
+.questionList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.questionCard {
+  background: rgba(0, 2, 18, 0.45);
+  border: 1px solid rgba(117, 76, 190, 0.15);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border-color 0.15s ease;
+}
+
+.questionCard:has(.answerSelected),
+.questionCardAnswered {
+  border-color: rgba(117, 76, 190, 0.35);
+}
+
+.questionTop {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.questionNum {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(117, 76, 190, 0.9);
+  background: rgba(117, 76, 190, 0.12);
+  border-radius: 5px;
+  padding: 0.2rem 0.45rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.questionText {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #ddd7ea;
+  line-height: 1.5;
+}
+
+.complianceNote {
+  margin: 0;
+  font-size: 0.78rem;
+  color: rgba(221, 215, 234, 0.4);
+  font-style: italic;
+  line-height: 1.4;
+  padding-left: 0.2rem;
+}
+
+/* Answer buttons */
+.answerBtns {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.answerBtn {
+  border: 1px solid rgba(221, 215, 234, 0.15);
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(221, 215, 234, 0.55);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.38rem 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.answerBtn:hover {
+  background: rgba(221, 215, 234, 0.05);
+}
+
+/* Yes */
+.answer_yes { }
+.answer_yes:hover { border-color: #22c55e; color: #4ade80; }
+.answer_yes.answerSelected {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+/* No */
+.answer_no { }
+.answer_no:hover { border-color: #ef4444; color: #f87171; }
+.answer_no.answerSelected {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+/* Partial */
+.answer_partial { }
+.answer_partial:hover { border-color: #f59e0b; color: #fbbf24; }
+.answer_partial.answerSelected {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+}
+
+/* N/A */
+.answer_n_a { }
+.answer_n_a:hover { border-color: rgba(148, 163, 184, 0.5); color: rgba(148, 163, 184, 0.8); }
+.answer_n_a.answerSelected {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(148, 163, 184, 0.08);
+  color: rgba(148, 163, 184, 0.8);
+}
+
+/* Navigation */
+.navRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(117, 76, 190, 0.1);
+}
+
+.navRight {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.primaryBtn {
+  border: none;
+  border-radius: 10px;
+  background: #754cbe;
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 0.72rem 1.4rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.primaryBtn:hover { background: #643dac; }
+.primaryBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.secondaryBtn {
+  border: 1px solid rgba(117, 76, 190, 0.5);
+  border-radius: 10px;
+  background: transparent;
+  color: #ddd7ea;
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding: 0.72rem 1.25rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.secondaryBtn:hover { border-color: #754cbe; background: rgba(117, 76, 190, 0.1); }
+.secondaryBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ghostBtn {
+  border: none;
+  background: transparent;
+  color: rgba(221, 215, 234, 0.4);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  transition: color 0.2s ease;
+}
+
+.ghostBtn:hover { color: rgba(221, 215, 234, 0.7); }
+.ghostBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Error */
+.errorMsg {
+  color: #f87171;
+  font-size: 0.85rem;
+  text-align: center;
+  margin: 0;
+}
+
+/* Phase indicator */
+.phaseRow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.phaseStep {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: rgba(221, 215, 234, 0.4);
+  white-space: nowrap;
+}
+
+.phaseActive { color: #ddd7ea; }
+.phaseDone   { color: #4ade80; }
+.phaseIdle   { color: rgba(221, 215, 234, 0.3); }
+
+.phaseBadge {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 700;
+  flex-shrink: 0;
+}
+
+.phaseConnector {
+  flex: 1;
+  height: 1px;
+  background: rgba(117, 76, 190, 0.2);
+  margin: 0 0.75rem;
+  min-width: 24px;
+}
+
+/* Org profile form */
+.orgForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.orgFormSection {
+  border: 1px solid rgba(117, 76, 190, 0.15);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+  background: rgba(0, 2, 18, 0.3);
+}
+
+.orgFormTitle {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ddd7ea;
+}
+
+.orgFormHint {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: rgba(221, 215, 234, 0.45);
+}
+
+.orgFormGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+@media (max-width: 580px) {
+  .orgFormGrid { grid-template-columns: 1fr; }
+}
+
+.orgField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.orgLabel {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: rgba(221, 215, 234, 0.8);
+}
+
+.orgInput {
+  border: 1px solid rgba(117, 76, 190, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 2, 18, 0.7);
+  color: #ddd7ea;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+
+.orgInput:focus { border-color: #9b7de2; }
+.orgInput[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
+
+.checkboxGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: rgba(221, 215, 234, 0.8);
+  cursor: pointer;
+}
+
+.checkbox {
+  width: 16px; height: 16px;
+  accent-color: #754cbe;
+  cursor: pointer;
+}
+
+.slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(117, 76, 190, 0.25);
+  outline: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #754cbe;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(117, 76, 190, 0.5);
+}
+
+.sliderLabels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: rgba(221, 215, 234, 0.3);
+}
+
+/* Loading */
+.loadingWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 3rem 0;
+}
+
+.loadingText {
+  color: rgba(221, 215, 234, 0.5);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(117, 76, 190, 0.2);
+  border-top-color: #754cbe;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

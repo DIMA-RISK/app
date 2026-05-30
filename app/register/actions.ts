@@ -11,6 +11,7 @@ interface RegisterPayload {
   address: string;
   org_country: string;
   dba_name: string;
+  org_ip: string;
 }
 
 export async function registerOrganization(payload: RegisterPayload) {
@@ -33,12 +34,17 @@ export async function registerOrganization(payload: RegisterPayload) {
     address: payload.address,
     org_country: payload.org_country,
     dba_name: payload.dba_name || null,
+    org_ip: payload.org_ip || null,
+    org_uid: Date.now(),
   });
 
   if (insertError) {
     await admin.auth.admin.deleteUser(authData.user.id);
     return { error: insertError.message };
   }
+
+  // Assign the correct compliance framework based on country + industry
+  await admin.rpc("assign_frameworks_for_org", { p_user_id: authData.user.id });
 
   return { error: null };
 }

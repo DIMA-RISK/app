@@ -49,6 +49,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Logged in + hitting /welcome or /onboarding but already completed onboarding → dashboard
+  // /scanning is exempt — user lands there right after onboarding completes, before the scan finishes
   if (user && (pathname.startsWith("/welcome") || pathname.startsWith("/onboarding"))) {
     const { data: org } = await supabase
       .from("organizations")
