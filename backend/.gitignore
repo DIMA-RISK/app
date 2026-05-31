@@ -1,0 +1,4 @@
+/bin/
+/ewnaf-out/
+*.test
+.DS_Store
