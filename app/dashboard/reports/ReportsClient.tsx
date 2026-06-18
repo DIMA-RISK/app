@@ -109,18 +109,23 @@ export default function ReportsClient({ data }: { data: ReportsData }) {
           <div style={{ fontWeight: 700, color: "#ddd7ea", marginBottom: "1rem", fontSize: "0.95rem" }}>Risk Component Breakdown</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             {[
-              { label: "Likelihood", value: data.risk.likelihood, color: "#ef4444" },
-              { label: "Impact", value: data.risk.impact, color: "#f97316" },
-              { label: "Control Effectiveness", value: data.risk.control, color: "#754cbe" },
+              { label: "Exposure (Data Volume Risk)",  value: data.risk.exposure,    color: "#f59e0b" },
+              { label: "Impact (Data Sensitivity)",    value: data.risk.impact,      color: "#f97316" },
+              { label: "Control (Third-Party Risk)",   value: data.risk.control,     color: "#754cbe" },
+              { label: "Likelihood (Compliance Gap)",  value: data.risk.likelihood,  color: "#ef4444" },
             ].map(({ label, value, color }) => (
               <div key={label}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}>
                   <span className={styles.textSm} style={{ color: "rgba(221,215,234,0.7)" }}>{label}</span>
-                  <span style={{ fontWeight: 600, fontSize: "0.82rem", color }}>{value}/100</span>
+                  <span style={{ fontWeight: 600, fontSize: "0.82rem", color }}>{value}/25</span>
                 </div>
-                <ScoreBar value={value} color={color} />
+                <ScoreBar value={value} max={25} color={color} />
               </div>
             ))}
+            <div style={{ display: "flex", justifyContent: "space-between", paddingTop: "0.5rem", borderTop: "1px solid rgba(117,76,190,0.15)", marginTop: "0.25rem" }}>
+              <span className={styles.textSm} style={{ color: "#ddd7ea", fontWeight: 600 }}>Total Score</span>
+              <span style={{ fontWeight: 700, fontSize: "0.88rem", color: bandColor }}>{data.risk.total}/100</span>
+            </div>
           </div>
         </div>
 

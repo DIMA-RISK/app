@@ -621,7 +621,7 @@ export async function getAssetsData(): Promise<AssetsData | null> {
 export interface ReportsData {
   org: { name: string; industry: string; country: string; email: string; };
   session: { frameworkId: string; completedAt: string | null; };
-  risk: { total: number; band: string; likelihood: number; impact: number; control: number; };
+  risk: { total: number; band: string; likelihood: number; impact: number; control: number; exposure: number; };
   financial: { totalMin: number; totalMax: number; breachCost: number; finesMin: number; finesMax: number; currency: string; };
   domains: DomainScore[];
   tasks: { title: string; priority: string; effort: string; description: string | null; }[];
@@ -640,7 +640,7 @@ export async function getReportsData(): Promise<ReportsData | null> {
   if (!session) return null;
 
   const [riskResult, financialResult, maturityResult, roadmapResult, responsesResult] = await Promise.all([
-    admin.from("risk_scores").select("total_score, risk_band, likelihood_score, impact_score, control_score").eq("session_id", session.id).maybeSingle(),
+    admin.from("risk_scores").select("total_score, risk_band, likelihood_score, impact_score, control_score, exposure_score").eq("session_id", session.id).maybeSingle(),
     admin.from("financial_impact").select("estimated_breach_cost, regulatory_fines_min, regulatory_fines_max, total_exposure_min, total_exposure_max, currency").eq("session_id", session.id).maybeSingle(),
     admin.from("maturity_scores").select("domain, raw_score, maturity_level, label").eq("session_id", session.id),
     admin.from("remediation_roadmap").select("title, priority, effort, description").eq("user_id", userId).order("priority_rank").limit(20),
@@ -658,7 +658,7 @@ export async function getReportsData(): Promise<ReportsData | null> {
   return {
     org: { name: org?.org_name ?? "", industry: org?.industry ?? "", country: org?.org_country ?? "", email: org?.email ?? "" },
     session: { frameworkId: session.framework_id, completedAt: session.completed_at ?? null },
-    risk: { total: Math.round(Number(r?.total_score ?? 0)), band: r?.risk_band ?? "unknown", likelihood: Math.round(Number(r?.likelihood_score ?? 0)), impact: Math.round(Number(r?.impact_score ?? 0)), control: Math.round(Number(r?.control_score ?? 0)) },
+    risk: { total: Math.round(Number(r?.total_score ?? 0)), band: r?.risk_band ?? "unknown", exposure: Math.round(Number(r?.exposure_score ?? 0)), impact: Math.round(Number(r?.impact_score ?? 0)), control: Math.round(Number(r?.control_score ?? 0)), likelihood: Math.round(Number(r?.likelihood_score ?? 0)) },
     financial: { totalMin: Math.round(Number(f?.total_exposure_min ?? 0)), totalMax: Math.round(Number(f?.total_exposure_max ?? 0)), breachCost: Math.round(Number(f?.estimated_breach_cost ?? 0)), finesMin: Math.round(Number(f?.regulatory_fines_min ?? 0)), finesMax: Math.round(Number(f?.regulatory_fines_max ?? 0)), currency: f?.currency ?? "CAD" },
     domains: (maturityResult.data ?? []).map((d) => ({ domain: d.domain, rawScore: Math.round(Number(d.raw_score)), maturityLevel: d.maturity_level, label: d.label })).sort((a, b) => a.rawScore - b.rawScore),
     tasks: (roadmapResult.data ?? []).map((t) => ({ title: t.title, priority: t.priority ?? "medium", effort: t.effort ?? "medium", description: t.description ?? null })),
