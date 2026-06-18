@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, Circle, Download } from "lucide-react";
+import { useState, useTransition } from "react";
+import { CheckCircle2, Circle, Loader2, Download } from "lucide-react";
 import type { ActionPlanData } from "../queries";
+import { updateTaskStatus } from "./taskActions";
 import styles from "../dashboard.module.css";
 
 const PRIORITY_CLASS: Record<string, string> = {
@@ -11,21 +12,45 @@ const PRIORITY_CLASS: Record<string, string> = {
 const EFFORT_CLASS: Record<string, string> = {
   "quick-win": styles.badgeGreen, medium: styles.badgeInfo, complex: styles.badgeHigh,
 };
+const STATUS_CYCLE: Record<string, "open" | "in-progress" | "resolved"> = {
+  open: "in-progress",
+  "in-progress": "resolved",
+  resolved: "open",
+};
 const FILTERS = ["all", "open", "in-progress", "resolved", "high", "medium"];
 
 export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
   const [filter, setFilter] = useState("all");
+  const [tasks, setTasks] = useState(data.tasks);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  const resolved = data.tasks.filter((t) => t.status === "resolved").length;
-  const inProgress = data.tasks.filter((t) => t.status === "in-progress").length;
-  const open = data.tasks.filter((t) => t.status === "open").length;
-  const pct = data.tasks.length > 0 ? Math.round((resolved / data.tasks.length) * 100) : 0;
+  const resolved = tasks.filter((t) => t.status === "resolved").length;
+  const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+  const open = tasks.filter((t) => t.status === "open").length;
+  const pct = tasks.length > 0 ? Math.round((resolved / tasks.length) * 100) : 0;
 
-  const filtered = filter === "all" ? data.tasks : data.tasks.filter(
-    (t) => t.status === filter || t.priority === filter
+  const filtered = filter === "all" ? tasks : tasks.filter(
+    (t) => t.status === filter || t.priority === filter,
   );
 
   const bandColor = data.riskBand === "critical" ? "#ef4444" : data.riskBand === "high" ? "#f97316" : data.riskBand === "medium" ? "#f59e0b" : "#22c55e";
+
+  function handleStatusClick(taskId: string, currentStatus: string) {
+    if (data.role !== "admin" || pendingId) return;
+    const nextStatus = STATUS_CYCLE[currentStatus] ?? "open";
+    setPendingId(taskId);
+    // Optimistic update
+    setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, status: nextStatus } : t));
+    startTransition(async () => {
+      const result = await updateTaskStatus(taskId, nextStatus);
+      if (result.error) {
+        // Revert on failure
+        setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, status: currentStatus } : t));
+      }
+      setPendingId(null);
+    });
+  }
 
   return (
     <>
@@ -47,7 +72,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
         <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter} ${styles.mb1}`}>
           <div>
             <div style={{ fontWeight: 700, color: "#ddd7ea", fontSize: "1rem" }}>Overall Progress</div>
-            <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)" }}>{resolved} of {data.tasks.length} tasks resolved</div>
+            <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)" }}>{resolved} of {tasks.length} tasks resolved</div>
           </div>
           <span style={{ fontSize: "1.5rem", fontWeight: 700, color: "#c4a8f0" }}>{pct}%</span>
         </div>
@@ -79,16 +104,28 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
       ) : (
         <div className={styles.flexCol} style={{ gap: "0.75rem" }}>
           {filtered.map((task) => {
+            const isThisPending = pendingId === task.id;
             const borderColor = task.priority === "critical" ? "#ef4444" : task.priority === "high" ? "#f97316" : "#f59e0b";
+            const canEdit = data.role === "admin";
+
             return (
               <div key={task.id} className={styles.card} style={{ borderLeftWidth: 3, borderLeftColor: borderColor }}>
                 <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter} ${styles.mb05}`}>
                   <div className={`${styles.flex} ${styles.gap08} ${styles.itemsCenter}`}>
-                    {task.status === "resolved"
-                      ? <CheckCircle2 size={18} color="#22c55e" />
-                      : task.status === "in-progress"
-                        ? <CheckCircle2 size={18} color="#f59e0b" />
-                        : <Circle size={18} color="rgba(221,215,234,0.3)" />}
+                    <button
+                      onClick={() => handleStatusClick(task.id, task.status)}
+                      disabled={!canEdit || !!pendingId}
+                      title={canEdit ? `Click to mark ${STATUS_CYCLE[task.status] ?? "open"}` : "View only"}
+                      style={{ background: "none", border: "none", padding: 0, cursor: canEdit ? "pointer" : "default", lineHeight: 0 }}
+                    >
+                      {isThisPending
+                        ? <Loader2 size={18} color="#f59e0b" style={{ animation: "spin 1s linear infinite" }} />
+                        : task.status === "resolved"
+                          ? <CheckCircle2 size={18} color="#22c55e" />
+                          : task.status === "in-progress"
+                            ? <CheckCircle2 size={18} color="#f59e0b" />
+                            : <Circle size={18} color={canEdit ? "rgba(221,215,234,0.5)" : "rgba(221,215,234,0.25)"} />}
+                    </button>
                     <span style={{
                       fontWeight: 600, color: "#ddd7ea", fontSize: "0.9rem",
                       textDecoration: task.status === "resolved" ? "line-through" : "none",
@@ -116,9 +153,15 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                       </span>
                     )}
                   </div>
-                  <span className={`${styles.badge} ${task.status === "resolved" ? styles.badgeGreen : task.status === "in-progress" ? styles.badgeMedium : styles.badgeGray}`}>
+                  <button
+                    onClick={() => handleStatusClick(task.id, task.status)}
+                    disabled={!canEdit || !!pendingId}
+                    title={canEdit ? `Click to mark ${STATUS_CYCLE[task.status] ?? "open"}` : undefined}
+                    className={`${styles.badge} ${task.status === "resolved" ? styles.badgeGreen : task.status === "in-progress" ? styles.badgeMedium : styles.badgeGray}`}
+                    style={{ cursor: canEdit ? "pointer" : "default", border: "none" }}
+                  >
                     {task.status}
-                  </span>
+                  </button>
                 </div>
               </div>
             );

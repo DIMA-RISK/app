@@ -84,11 +84,18 @@ function fmtDate(iso: string) {
   }
 }
 
-const ACTIVITY = [
-  { type: "success", text: "Assessment completed — risk score calculated", time: "Just now" },
-  { type: "info",    text: "Compliance questionnaire answers saved", time: "Just now" },
-  { type: "info",    text: "Network scan initiated on onboarding", time: "Earlier today" },
-];
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
 
 const DOT_CLASS: Record<string, string> = {
   success: styles.dotSuccess,
@@ -371,15 +378,23 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             </span>
           </div>
           <div className={styles.timeline}>
-            {ACTIVITY.map((a, i) => (
-              <div key={i} className={styles.timelineItem}>
-                <div className={`${styles.timelineDot} ${DOT_CLASS[a.type]}`} />
+            {data.activity.length === 0 ? (
+              <div className={styles.timelineItem}>
                 <div className={styles.timelineContent}>
-                  <p className={styles.timelineText}>{a.text}</p>
-                  <p className={styles.timelineTime}>{a.time}</p>
+                  <p className={styles.timelineTime}>No activity yet — complete your assessment to get started.</p>
                 </div>
               </div>
-            ))}
+            ) : (
+              data.activity.map((a, i) => (
+                <div key={i} className={styles.timelineItem}>
+                  <div className={`${styles.timelineDot} ${DOT_CLASS[a.type]}`} />
+                  <div className={styles.timelineContent}>
+                    <p className={styles.timelineText}>{a.text}</p>
+                    <p className={styles.timelineTime}>{relativeTime(a.timestamp)}</p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

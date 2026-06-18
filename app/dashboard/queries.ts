@@ -81,6 +81,7 @@ export interface DashboardData {
   currency: string;
   snapshotDate: string;
   hasSession: boolean;
+  activity: { type: "success" | "info"; text: string; timestamp: string }[];
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
@@ -105,6 +106,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     currency: "CAD",
     snapshotDate: new Date().toISOString(),
     hasSession: false,
+    activity: [],
   };
 
   const ctx = await getOrgContext();
@@ -114,13 +116,13 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_name")
+    .select("org_name, org_uid, id")
     .eq("user_id", userId)
     .single();
 
   const { data: session } = await admin
     .from("assessment_sessions")
-    .select("id, framework_id, completed_at")
+    .select("id, framework_id, completed_at, started_at")
     .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
@@ -130,11 +132,13 @@ export async function getDashboardData(): Promise<DashboardData> {
     return { ...empty, orgName: org?.org_name ?? empty.orgName };
   }
 
-  const [riskResult, responsesResult, remediationResult, financialResult, frameworkResult] =
+  const orgUid = org?.org_uid ?? org?.id ?? null;
+
+  const [riskResult, responsesResult, remediationResult, financialResult, frameworkResult, scanResult] =
     await Promise.all([
       admin
         .from("risk_scores")
-        .select("total_score, risk_band")
+        .select("total_score, risk_band, calculated_at")
         .eq("session_id", session.id)
         .maybeSingle(),
       admin
@@ -158,6 +162,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         .select("name")
         .eq("id", session.framework_id)
         .maybeSingle(),
+      orgUid
+        ? admin.from("fact_software_results").select("created_at").eq("org_uid", orgUid).order("created_at", { ascending: false }).limit(1).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ]);
 
   const responses = responsesResult.data ?? [];
@@ -176,6 +183,18 @@ export async function getDashboardData(): Promise<DashboardData> {
     effort: t.effort ?? "medium",
     description: t.description ?? null,
   }));
+
+  const activity: DashboardData["activity"] = [];
+  if (riskResult.data?.calculated_at) {
+    activity.push({ type: "success", text: "Assessment completed — risk score calculated", timestamp: riskResult.data.calculated_at });
+  }
+  if (scanResult.data?.created_at) {
+    activity.push({ type: "info", text: "Network scan completed", timestamp: scanResult.data.created_at });
+  }
+  if (session.started_at) {
+    activity.push({ type: "info", text: "Compliance questionnaire answers saved", timestamp: session.started_at });
+  }
+  activity.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
   return {
     orgName: org?.org_name ?? empty.orgName,
@@ -201,6 +220,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     currency: financialResult.data?.currency ?? "CAD",
     snapshotDate: session.completed_at ?? new Date().toISOString(),
     hasSession: true,
+    activity,
   };
 }
 
@@ -427,6 +447,7 @@ export interface ActionPlanData {
   tasks: RoadmapTask[];
   riskScore: number;
   riskBand: string;
+  role: "admin" | "viewer";
 }
 
 export async function getActionPlanData(): Promise<ActionPlanData | null> {
@@ -461,6 +482,7 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
     })),
     riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
     riskBand: riskResult.data?.risk_band ?? "unknown",
+    role: ctx.role,
   };
 }
 
