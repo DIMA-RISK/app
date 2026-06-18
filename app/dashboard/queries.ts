@@ -951,7 +951,7 @@ export async function getTopNavData(): Promise<TopNavData> {
   const admin = createAdminClient();
 
   const [orgResult, sessionResult] = await Promise.all([
-    admin.from("organizations").select("org_name").eq("user_id", userId).single(),
+    admin.from("organizations").select("org_name, org_uid, id").eq("user_id", userId).single(),
     admin
       .from("assessment_sessions")
       .select("id, framework_id, completed_at")
@@ -971,8 +971,10 @@ export async function getTopNavData(): Promise<TopNavData> {
 
   const session = sessionResult.data;
 
-  const [riskResult, frameworkResult, roadmapResult, countResult] = await Promise.all([
-    admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle(),
+  const orgUid = orgResult.data?.org_uid ?? orgResult.data?.id ?? null;
+
+  const [riskResult, frameworkResult, roadmapResult, countResult, scanResult] = await Promise.all([
+    admin.from("risk_scores").select("total_score, risk_band, calculated_at").eq("session_id", session.id).maybeSingle(),
     admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle(),
     admin
       .from("remediation_roadmap")
@@ -988,6 +990,9 @@ export async function getTopNavData(): Promise<TopNavData> {
       .eq("user_id", userId)
       .eq("status", "open")
       .in("priority", ["critical", "high"]),
+    orgUid
+      ? admin.from("fact_software_results").select("created_at").eq("org_uid", orgUid).order("created_at", { ascending: false }).limit(1).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const recentAlerts: TopNavAlert[] = (roadmapResult.data ?? []).map((t) => ({
@@ -1002,7 +1007,10 @@ export async function getTopNavData(): Promise<TopNavData> {
     riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
     riskBand: (riskResult.data?.risk_band as TopNavData["riskBand"]) ?? null,
     frameworkName: frameworkResult.data?.name ?? session.framework_id?.toUpperCase() ?? null,
-    lastRun: session.completed_at,
+    lastRun: [riskResult.data?.calculated_at, scanResult.data?.created_at, session.completed_at]
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? null,
     userEmail: currentUserEmail,
     alertCount: countResult.count ?? 0,
     recentAlerts,
