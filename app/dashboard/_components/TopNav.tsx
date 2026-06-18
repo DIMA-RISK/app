@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Search, Bell, Building2, Settings, LogOut, User, AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { createClient } from "../../../utils/supabase/client";
+import type { TopNavData } from "../queries";
 import styles from "../dashboard.module.css";
 
 const TITLES: Record<string, string> = {
@@ -22,13 +23,41 @@ const TITLES: Record<string, string> = {
   "/dashboard/users": "User Management",
 };
 
-const RECENT_ALERTS = [
-  { type: "critical", icon: AlertTriangle, title: "No Privacy Officer appointed", time: "2h ago", color: "#ef4444" },
-  { type: "warning", icon: AlertCircle, title: "Compliance score dropped to 72%", time: "2h ago", color: "#f59e0b" },
-  { type: "info", icon: Info, title: "New recommendation: Enable MFA", time: "3h ago", color: "#60a5fa" },
-];
+const BAND_CLASS: Record<string, string> = {
+  critical: "statusCritical",
+  high:     "statusCritical",
+  medium:   "statusAtRisk",
+  low:      "statusCompliant",
+};
 
-export default function TopNav() {
+const BAND_LABEL: Record<string, string> = {
+  critical: "Critical Risk",
+  high:     "High Risk",
+  medium:   "At Risk",
+  low:      "Low Risk",
+};
+
+const ALERT_ICON: Record<string, { Icon: React.ElementType; color: string }> = {
+  critical: { Icon: AlertTriangle, color: "#ef4444" },
+  warning:  { Icon: AlertCircle,   color: "#f59e0b" },
+  info:     { Icon: Info,          color: "#60a5fa" },
+};
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "Never run";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+export default function TopNav({ topNavData }: { topNavData: TopNavData }) {
   const pathname = usePathname();
   const router = useRouter();
   const title = TITLES[pathname] ?? "Dashboard";
@@ -39,7 +68,6 @@ export default function TopNav() {
   const bellRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdowns when clicking outside
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
@@ -55,6 +83,10 @@ export default function TopNav() {
     router.push("/login");
   }
 
+  const band = topNavData.riskBand ?? "medium";
+  const bandClass = BAND_CLASS[band] ?? "statusAtRisk";
+  const bandLabel = BAND_LABEL[band] ?? "At Risk";
+
   return (
     <header className={styles.topnav}>
       <span className={styles.topnavTitle}>{title}</span>
@@ -68,53 +100,72 @@ export default function TopNav() {
         {/* Org badge */}
         <div className={styles.topnavOrgBadge}>
           <Building2 size={12} />
-          Acme Health Solutions
+          {topNavData.orgName}
         </div>
 
-        {/* Compliance status */}
-        <div className={`${styles.topnavStatusBadge} ${styles.statusAtRisk}`}>
-          <span className={styles.topnavDot} />
-          At Risk · PIPEDA 72%
-        </div>
+        {/* Risk / compliance status — only shown after assessment */}
+        {topNavData.riskBand && (
+          <div className={`${styles.topnavStatusBadge} ${styles[bandClass]}`}>
+            <span className={styles.topnavDot} />
+            {bandLabel} · {topNavData.frameworkName ?? "—"} {topNavData.riskScore}%
+          </div>
+        )}
 
         {/* Last run */}
         <div className={styles.topnavOrgBadge} style={{ fontSize: "0.7rem", color: "rgba(221,215,234,0.45)" }}>
-          Last run: 2h ago
+          Last run: {relativeTime(topNavData.lastRun)}
         </div>
 
         {/* Bell */}
         <div className={styles.dropdownAnchor} ref={bellRef}>
-          <button className={styles.topnavIconBtn} onClick={() => { setBellOpen((o) => !o); setMenuOpen(false); }}>
+          <button
+            className={styles.topnavIconBtn}
+            onClick={() => { setBellOpen((o) => !o); setMenuOpen(false); }}
+          >
             <Bell size={15} />
-            <span className={styles.topnavNotifDot} />
+            {topNavData.recentAlerts.length > 0 && <span className={styles.topnavNotifDot} />}
           </button>
 
           {bellOpen && (
             <div className={`${styles.dropdown} ${styles.dropdownNotif}`}>
               <div className={styles.dropdownHead}>
                 Notifications
-                <Link href="/dashboard/alerts" className={`${styles.badge} ${styles.badgePurple}`}
-                  onClick={() => setBellOpen(false)}>
+                <Link
+                  href="/dashboard/alerts"
+                  className={`${styles.badge} ${styles.badgePurple}`}
+                  onClick={() => setBellOpen(false)}
+                >
                   View all
                 </Link>
               </div>
-              {RECENT_ALERTS.map((a, i) => {
-                const Icon = a.icon;
-                return (
-                  <div key={i} className={styles.dropdownNotifItem}>
-                    <div className={`${styles.flex} ${styles.gap08} ${styles.itemsCenter}`}>
-                      <Icon size={14} color={a.color} style={{ flexShrink: 0 }} />
-                      <div>
-                        <div className={styles.dropdownNotifTitle}>{a.title}</div>
-                        <div className={styles.dropdownNotifTime}>{a.time}</div>
+
+              {topNavData.recentAlerts.length === 0 ? (
+                <div className={styles.dropdownNotifItem} style={{ color: "rgba(221,215,234,0.4)", fontSize: "0.8rem" }}>
+                  No open critical items
+                </div>
+              ) : (
+                topNavData.recentAlerts.map((a, i) => {
+                  const { Icon, color } = ALERT_ICON[a.type] ?? ALERT_ICON.warning;
+                  return (
+                    <div key={i} className={styles.dropdownNotifItem}>
+                      <div className={`${styles.flex} ${styles.gap08} ${styles.itemsCenter}`}>
+                        <Icon size={14} color={color} style={{ flexShrink: 0 }} />
+                        <div>
+                          <div className={styles.dropdownNotifTitle}>{a.title}</div>
+                          <div className={styles.dropdownNotifTime}>{relativeTime(a.createdAt)}</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
+
               <div className={styles.dropdownFooter}>
-                <Link href="/dashboard/alerts" className={`${styles.textXs} ${styles.textPurple}`}
-                  onClick={() => setBellOpen(false)}>
+                <Link
+                  href="/dashboard/alerts"
+                  className={`${styles.textXs} ${styles.textPurple}`}
+                  onClick={() => setBellOpen(false)}
+                >
                   View all alerts →
                 </Link>
               </div>
@@ -124,20 +175,23 @@ export default function TopNav() {
 
         {/* Avatar / user menu */}
         <div className={styles.dropdownAnchor} ref={menuRef}>
-          <div className={styles.topnavAvatar}
+          <div
+            className={styles.topnavAvatar}
             onClick={() => { setMenuOpen((o) => !o); setBellOpen(false); }}
-            title="Account menu">
-            YA
+            title="Account menu"
+          >
+            {topNavData.orgInitials}
           </div>
 
           {menuOpen && (
             <div className={`${styles.dropdown} ${styles.dropdownMenu}`}>
-              {/* User info */}
               <div className={styles.dropdownUserHead}>
-                <div className={styles.topnavAvatar} style={{ width: 32, height: 32, fontSize: "0.72rem", cursor: "default" }}>YA</div>
+                <div className={styles.topnavAvatar} style={{ width: 32, height: 32, fontSize: "0.72rem", cursor: "default" }}>
+                  {topNavData.orgInitials}
+                </div>
                 <div>
-                  <div className={styles.dropdownUserName}>Younes A.</div>
-                  <div className={styles.dropdownUserEmail}>admin@acmehealth.ca</div>
+                  <div className={styles.dropdownUserName}>{topNavData.orgName}</div>
+                  <div className={styles.dropdownUserEmail}>{topNavData.userEmail}</div>
                 </div>
               </div>
 

@@ -911,6 +911,104 @@ export async function getAlertCount(): Promise<number> {
   return count ?? 0;
 }
 
+// ─── Top Nav ──────────────────────────────────────────────────────────────────
+
+export interface TopNavAlert {
+  type: "critical" | "warning" | "info";
+  title: string;
+  createdAt: string;
+}
+
+export interface TopNavData {
+  orgName: string;
+  orgInitials: string;
+  riskScore: number;
+  riskBand: "critical" | "high" | "medium" | "low" | null;
+  frameworkName: string | null;
+  lastRun: string | null;
+  userEmail: string;
+  alertCount: number;
+  recentAlerts: TopNavAlert[];
+}
+
+export async function getTopNavData(): Promise<TopNavData> {
+  const empty: TopNavData = {
+    orgName: "Your Organization",
+    orgInitials: "YO",
+    riskScore: 0,
+    riskBand: null,
+    frameworkName: null,
+    lastRun: null,
+    userEmail: "",
+    alertCount: 0,
+    recentAlerts: [],
+  };
+
+  const ctx = await getOrgContext();
+  if (!ctx) return empty;
+
+  const { userId, currentUserEmail } = ctx;
+  const admin = createAdminClient();
+
+  const [orgResult, sessionResult] = await Promise.all([
+    admin.from("organizations").select("org_name").eq("user_id", userId).single(),
+    admin
+      .from("assessment_sessions")
+      .select("id, framework_id, completed_at")
+      .eq("user_id", userId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const orgName = orgResult.data?.org_name ?? empty.orgName;
+  const words = orgName.trim().split(/\s+/);
+  const orgInitials = words.slice(0, 2).map((w: string) => w[0].toUpperCase()).join("");
+
+  if (!sessionResult.data) {
+    return { ...empty, orgName, orgInitials, userEmail: currentUserEmail };
+  }
+
+  const session = sessionResult.data;
+
+  const [riskResult, frameworkResult, roadmapResult, countResult] = await Promise.all([
+    admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle(),
+    admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle(),
+    admin
+      .from("remediation_roadmap")
+      .select("title, priority")
+      .eq("user_id", userId)
+      .eq("status", "open")
+      .in("priority", ["critical", "high"])
+      .order("priority_rank")
+      .limit(3),
+    admin
+      .from("remediation_roadmap")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "open")
+      .in("priority", ["critical", "high"]),
+  ]);
+
+  const recentAlerts: TopNavAlert[] = (roadmapResult.data ?? []).map((t) => ({
+    type: t.priority === "critical" ? "critical" : "warning",
+    title: t.title.length > 55 ? t.title.slice(0, 55) + "…" : t.title,
+    createdAt: session.completed_at ?? new Date().toISOString(),
+  }));
+
+  return {
+    orgName,
+    orgInitials,
+    riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
+    riskBand: (riskResult.data?.risk_band as TopNavData["riskBand"]) ?? null,
+    frameworkName: frameworkResult.data?.name ?? session.framework_id?.toUpperCase() ?? null,
+    lastRun: session.completed_at,
+    userEmail: currentUserEmail,
+    alertCount: countResult.count ?? 0,
+    recentAlerts,
+  };
+}
+
 export async function deleteEvidenceFile(id: string): Promise<{ error?: string }> {
   const ctx = await getOrgContext();
   if (!ctx) return { error: "Not authenticated" };
