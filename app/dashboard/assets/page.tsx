@@ -35,6 +35,8 @@ export default async function AssetsPage() {
           <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.55)", maxWidth: 480, margin: "0 auto 1rem" }}>
             {data?.auditStatus === "NO_SCOPE"
               ? "Your IP address was classified as residential or private — EWNAF only scans public-facing healthcare infrastructure. Once your organization has a public IP associated with its environment, scan results will appear here automatically."
+              : data?.auditStatus === "PENDING"
+              ? "A scan has been queued and is currently processing. Results will appear here automatically once the scan completes — this usually takes a few minutes."
               : "No network scan data found. Make sure your organization IP is registered and a scan has been completed."}
           </p>
           {data?.orgIp && (

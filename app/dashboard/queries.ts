@@ -619,6 +619,8 @@ export async function getAssetsData(): Promise<AssetsData | null> {
     .maybeSingle();
 
   const orgIp = org?.org_ip ?? null;
+  // Row exists but results not yet written — scan is still processing
+  if (scan && !scan.results) return { orgIp, auditStatus: "PENDING", globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: scan.created_at ?? null, noScope: true };
   if (!scan?.results) return { orgIp, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
 
   const r = scan.results as Record<string, unknown>;

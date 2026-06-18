@@ -189,12 +189,14 @@ export async function checkScanStatus(): Promise<{ done: boolean; error: string 
 
   const { data: result } = await admin
     .from("fact_software_results")
-    .select("job_id")
+    .select("job_id, results")
     .eq("org_uid", orgUid)
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  return { done: !!result, error: null };
+  // Only consider the scan done when results are actually populated
+  return { done: !!(result && result.results), error: null };
 }
 
 export async function rescoreWithScan() {
