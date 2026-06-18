@@ -1017,11 +1017,15 @@ export async function getTopNavData(): Promise<TopNavData> {
       : Promise.resolve({ data: null, error: null }),
   ]);
 
-  const recentAlerts: TopNavAlert[] = (roadmapResult.data ?? []).map((t) => ({
-    type: t.priority === "critical" ? "critical" : "warning",
-    title: t.title.length > 55 ? t.title.slice(0, 55) + "…" : t.title,
-    createdAt: session.completed_at ?? new Date().toISOString(),
-  }));
+  const alertTimestamp = riskResult.data?.calculated_at ?? session.completed_at ?? null;
+
+  const recentAlerts: TopNavAlert[] = alertTimestamp
+    ? (roadmapResult.data ?? []).map((t) => ({
+        type: t.priority === "critical" ? "critical" : "warning",
+        title: t.title.length > 55 ? t.title.slice(0, 55) + "…" : t.title,
+        createdAt: alertTimestamp,
+      }))
+    : [];
 
   return {
     orgName,
