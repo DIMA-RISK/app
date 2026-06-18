@@ -12,12 +12,12 @@ const PRIORITY_CLASS: Record<string, string> = {
 const EFFORT_CLASS: Record<string, string> = {
   "quick-win": styles.badgeGreen, medium: styles.badgeInfo, complex: styles.badgeHigh,
 };
-const STATUS_CYCLE: Record<string, "open" | "in-progress" | "resolved"> = {
-  open: "in-progress",
-  "in-progress": "resolved",
+const STATUS_CYCLE: Record<string, "open" | "in_progress" | "resolved"> = {
+  open: "in_progress",
+  "in_progress": "resolved",
   resolved: "open",
 };
-const FILTERS = ["all", "open", "in-progress", "resolved", "high", "medium"];
+const FILTERS = ["all", "open", "in_progress", "resolved", "high", "medium"];
 
 export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
   const [filter, setFilter] = useState("all");
@@ -26,7 +26,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
   const [isPending, startTransition] = useTransition();
 
   const resolved = tasks.filter((t) => t.status === "resolved").length;
-  const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+  const inProgress = tasks.filter((t) => t.status === "in_progress").length;
   const open = tasks.filter((t) => t.status === "open").length;
   const pct = tasks.length > 0 ? Math.round((resolved / tasks.length) * 100) : 0;
 
@@ -80,7 +80,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
           <div className={`${styles.progressFill} ${styles.fillPurple}`} style={{ width: `${pct}%` }} />
         </div>
         <div className={`${styles.flex} ${styles.gap1} ${styles.mt05}`}>
-          {[["open", open, "#f87171"], ["in-progress", inProgress, "#fbbf24"], ["resolved", resolved, "#4ade80"]].map(([label, count, color]) => (
+          {[["open", open, "#f87171"], ["in progress", inProgress, "#fbbf24"], ["resolved", resolved, "#4ade80"]].map(([label, count, color]) => (
             <span key={label as string} className={styles.textXs} style={{ color: color as string }}>
               ● {count} {label}
             </span>
@@ -92,7 +92,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
       <div className={styles.tabs}>
         {FILTERS.map((f) => (
           <button key={f} className={`${styles.tab} ${filter === f ? styles.tabActive : ""}`} onClick={() => setFilter(f)}>
-            {f === "all" ? "All Tasks" : f.charAt(0).toUpperCase() + f.slice(1).replace("-", " ")}
+            {f === "all" ? "All Tasks" : f === "in_progress" ? "In Progress" : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
@@ -122,7 +122,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                         ? <Loader2 size={18} color="#f59e0b" style={{ animation: "spin 1s linear infinite" }} />
                         : task.status === "resolved"
                           ? <CheckCircle2 size={18} color="#22c55e" />
-                          : task.status === "in-progress"
+                          : task.status === "in_progress"
                             ? <CheckCircle2 size={18} color="#f59e0b" />
                             : <Circle size={18} color={canEdit ? "rgba(221,215,234,0.5)" : "rgba(221,215,234,0.25)"} />}
                     </button>
@@ -157,10 +157,10 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                     onClick={() => handleStatusClick(task.id, task.status)}
                     disabled={!canEdit || !!pendingId}
                     title={canEdit ? `Click to mark ${STATUS_CYCLE[task.status] ?? "open"}` : undefined}
-                    className={`${styles.badge} ${task.status === "resolved" ? styles.badgeGreen : task.status === "in-progress" ? styles.badgeMedium : styles.badgeGray}`}
+                    className={`${styles.badge} ${task.status === "resolved" ? styles.badgeGreen : task.status === "in_progress" ? styles.badgeMedium : styles.badgeGray}`}
                     style={{ cursor: canEdit ? "pointer" : "default", border: "none" }}
                   >
-                    {task.status}
+                    {task.status === "in_progress" ? "in progress" : task.status}
                   </button>
                 </div>
               </div>

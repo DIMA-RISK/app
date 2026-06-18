@@ -5,7 +5,7 @@ import { createClient } from "../../../utils/supabase/server";
 
 export async function updateTaskStatus(
   taskId: string,
-  status: "open" | "in-progress" | "resolved",
+  status: "open" | "in_progress" | "resolved",
 ): Promise<{ error?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
