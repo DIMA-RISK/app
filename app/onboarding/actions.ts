@@ -3,7 +3,6 @@
 import { createAdminClient } from "../../utils/supabase/admin";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { randomUUID } from "crypto";
 
 interface AnswerEntry {
   session_id: string;
@@ -85,69 +84,14 @@ export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: 
     await admin.rpc("calculate_financial_impact", { p_session_id: sessionId });
 
     // 3b. Generate remediation roadmap from failed / partial responses
-    const failedEntries = entries.filter(
-      (e) => e.response === "no" || e.response === "partial",
-    );
-
-    if (failedEntries.length > 0) {
-      const failedIds = failedEntries.map((e) => e.question_id);
-      const qMap = new Map<number, { text: string; statement: string | null }>();
-
-      if (frameworkId === "pipeda") {
-        const { data: pq } = await admin
-          .from("pipeda_questions")
-          .select("question_id, business_question, compliance_statement")
-          .in("question_id", failedIds);
-
-        (pq ?? []).forEach((q) =>
-          qMap.set(q.question_id, {
-            text: q.business_question,
-            statement: q.compliance_statement ?? null,
-          }),
-        );
-      } else if (frameworkId === "hipaa") {
-        const { data: hq } = await admin
-          .from("HIPAA_Questions")
-          .select("question_id, Question, compliance_statement")
-          .in("question_id", failedIds);
-
-        (hq ?? []).forEach((q) =>
-          qMap.set(q.question_id, {
-            text: q.Question,
-            statement: q.compliance_statement ?? null,
-          }),
-        );
-      }
-
-      const roadmapRows = failedEntries.flatMap((e) => {
-        const q = qMap.get(e.question_id);
-        if (!q) return [];
-        return [
-          {
-            session_id: sessionId,
-            user_id: user.id,
-            title: q.text,
-            description: q.statement,
-            priority: e.response === "no" ? "high" : "medium",
-            effort: "medium",
-            status: "open",
-            category: "administrative",
-          },
-        ];
-      });
-
-      if (roadmapRows.length > 0) {
-        await admin.from("remediation_roadmap").delete().eq("user_id", user.id);
-        await admin.from("remediation_roadmap").insert(roadmapRows);
-      }
-    }
+    await regenerateRoadmap(admin, user.id, sessionId, frameworkId);
   } else {
     // No questionnaire — still try to find session and score with org data only
     const { data: session } = await admin
       .from("assessment_sessions")
       .select("id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
+      .order("started_at", { ascending: false })
       .limit(1)
       .single();
 
@@ -211,7 +155,7 @@ export async function queueScanJob() {
   if (existing) return { error: null }; // already queued
 
   const { error } = await admin.from("software_queue").insert({
-    job_id: randomUUID(),
+    job_id: Date.now(),
     org_uid: org.org_uid,
     org_ip: org.org_ip,
     status: "queued",
@@ -253,9 +197,9 @@ export async function rescoreWithScan() {
 
   const { data: session } = await admin
     .from("assessment_sessions")
-    .select("id")
+    .select("id, framework_id")
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
+    .order("started_at", { ascending: false })
     .limit(1)
     .single();
 
@@ -264,5 +208,61 @@ export async function rescoreWithScan() {
   await admin.rpc("calculate_risk_score", { p_session_id: session.id });
   await admin.rpc("calculate_financial_impact", { p_session_id: session.id });
 
+  // Regenerate roadmap from existing responses (handles case where onboarding
+  // roadmap insert was skipped or question_id mapping changed)
+  await regenerateRoadmap(admin, user.id, session.id, session.framework_id);
+
   return { error: null };
+}
+
+async function regenerateRoadmap(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  sessionId: string,
+  frameworkId: string,
+) {
+  const { data: responses } = await admin
+    .from("questionnaire_responses")
+    .select("question_id, response")
+    .eq("session_id", sessionId)
+    .in("response", ["no", "partial"]);
+
+  if (!responses || responses.length === 0) return;
+
+  const failedIds = responses.map((r) => r.question_id);
+  const qMap = new Map<number, { text: string; statement: string | null }>();
+
+  if (frameworkId === "pipeda") {
+    const { data: pq } = await admin
+      .from("pipeda_questions")
+      .select("id, business_question, compliance_statement")
+      .in("id", failedIds);
+    (pq ?? []).forEach((q) => qMap.set(q.id, { text: q.business_question, statement: q.compliance_statement ?? null }));
+  } else if (frameworkId === "hipaa") {
+    const { data: hq } = await admin
+      .from("hipaa_questions")
+      .select("id, questionaire, statement")
+      .in("id", failedIds);
+    (hq ?? []).forEach((q) => qMap.set(q.id, { text: q.questionaire, statement: q.statement ?? null }));
+  }
+
+  const rows = responses.flatMap((r) => {
+    const q = qMap.get(r.question_id);
+    if (!q) return [];
+    return [{
+      session_id: sessionId,
+      user_id: userId,
+      title: q.text,
+      description: q.statement,
+      category: "administrative",
+      priority: r.response === "no" ? "critical" : "high",
+      effort: "medium",
+      status: "open",
+    }];
+  });
+
+  if (rows.length > 0) {
+    await admin.from("remediation_roadmap").delete().eq("session_id", sessionId);
+    await admin.from("remediation_roadmap").insert(rows);
+  }
 }

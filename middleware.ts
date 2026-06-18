@@ -36,29 +36,38 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Logged in + hitting a public route → smart redirect based on onboarding
-  if (user && isPublic) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("onboarding_completed")
-      .eq("user_id", user.id)
-      .single();
+  // For any route where onboarding state matters, do a single DB lookup
+  // /scanning is always exempt — user lands there right after submit, before the flag flips
+  if (user) {
+    const needsOrgCheck =
+      isPublic ||
+      pathname.startsWith("/welcome") ||
+      pathname.startsWith("/onboarding") ||
+      pathname.startsWith("/dashboard");
 
-    const destination = org?.onboarding_completed ? "/dashboard" : "/welcome";
-    return NextResponse.redirect(new URL(destination, request.url));
-  }
+    if (needsOrgCheck) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("onboarding_completed")
+        .eq("user_id", user.id)
+        .single();
 
-  // Logged in + hitting /welcome or /onboarding but already completed onboarding → dashboard
-  // /scanning is exempt — user lands there right after onboarding completes, before the scan finishes
-  if (user && (pathname.startsWith("/welcome") || pathname.startsWith("/onboarding"))) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("onboarding_completed")
-      .eq("user_id", user.id)
-      .single();
+      const completed = org?.onboarding_completed ?? false;
 
-    if (org?.onboarding_completed) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+      // Logged in + public route → smart redirect
+      if (isPublic) {
+        return NextResponse.redirect(new URL(completed ? "/dashboard" : "/welcome", request.url));
+      }
+
+      // Already completed → don't let them revisit welcome/onboarding
+      if (completed && (pathname.startsWith("/welcome") || pathname.startsWith("/onboarding"))) {
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
+
+      // Incomplete onboarding → cannot access dashboard
+      if (!completed && pathname.startsWith("/dashboard")) {
+        return NextResponse.redirect(new URL("/welcome", request.url));
+      }
     }
   }
 

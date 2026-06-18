@@ -1,4 +1,4 @@
-import { getDashboardData } from "./actions";
+import { getDashboardData } from "./queries";
 import ExecutiveSummary from "./_components/ExecutiveSummary";
 
 export default async function ExecutiveSummaryPage() {

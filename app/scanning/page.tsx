@@ -21,16 +21,19 @@ const SCAN_PHASES = [
 export default function ScanningPage() {
   const router = useRouter();
   const [phase, setPhase] = useState(SCAN_PHASES[0]);
+  const [phaseIndex, setPhaseIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
-  const phaseRef = useRef(0);
   const progressRef = useRef(0);
 
   useEffect(() => {
     // Advance phase message every 8 seconds
     const phaseInterval = setInterval(() => {
-      phaseRef.current = Math.min(phaseRef.current + 1, SCAN_PHASES.length - 1);
-      setPhase(SCAN_PHASES[phaseRef.current]);
+      setPhaseIndex((prev) => {
+        const next = Math.min(prev + 1, SCAN_PHASES.length - 1);
+        setPhase(SCAN_PHASES[next]);
+        return next;
+      });
     }, 8000);
 
     // Smoothly advance progress bar (never reaches 100 until scan is confirmed done)
@@ -103,7 +106,7 @@ export default function ScanningPage() {
           {SCAN_CHECKS.map((check, i) => (
             <div
               key={check}
-              className={`${styles.findingRow} ${phaseRef.current > i ? styles.findingDone : phaseRef.current === i ? styles.findingActive : ""}`}
+              className={`${styles.findingRow} ${phaseIndex > i ? styles.findingDone : phaseIndex === i ? styles.findingActive : ""}`}
             >
               <span className={styles.findingDot} />
               <span className={styles.findingLabel}>{check}</span>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { BarChart2, AlertTriangle, CheckCircle2, Clock, Download, RefreshCw, ArrowRight } from "lucide-react";
 import styles from "../dashboard.module.css";
-import type { DashboardData } from "../actions";
+import type { DashboardData } from "../queries";
 
 const ARC_LENGTH = 251.3;
 

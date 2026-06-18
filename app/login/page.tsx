@@ -81,7 +81,7 @@ export default function LoginPage() {
           </button>
 
           <p className={styles.registerLink}>
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <a href="/register" className={styles.link}>Create one</a>
           </p>
         </form>

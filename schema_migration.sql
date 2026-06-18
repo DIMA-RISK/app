@@ -349,11 +349,14 @@ CREATE OR REPLACE VIEW v_session_questions AS
   FROM assessment_sessions s
   JOIN pipeda_questions q ON s.framework_id = 'pipeda'
   WHERE
-    -- Healthcare & Healthtech get general + healthcare-specific questions
-    (s.industry IN ('Healthcare', 'Healthtech') AND q.category IN ('general', 'healthcare'))
-    OR
-    -- Education, Fintech, Finance get general questions only
-    (s.industry IN ('Education', 'Fintech', 'Finance') AND q.category = 'general')
+    (s.user_id = auth.uid() OR auth.uid() IS NULL)
+    AND (
+      -- Healthcare & Healthtech get general + healthcare-specific questions
+      (s.industry IN ('Healthcare', 'Healthtech') AND q.category IN ('general', 'healthcare'))
+      OR
+      -- Education, Fintech, Finance get general questions only
+      (s.industry IN ('Education', 'Fintech', 'Finance') AND q.category = 'general')
+    )
 
   UNION ALL
 
@@ -371,7 +374,8 @@ CREATE OR REPLACE VIEW v_session_questions AS
     NULL                  AS reference,
     NULL                  AS category
   FROM assessment_sessions s
-  JOIN hipaa_questions q ON s.framework_id = 'hipaa';
+  JOIN hipaa_questions q ON s.framework_id = 'hipaa'
+  WHERE (s.user_id = auth.uid() OR auth.uid() IS NULL);
 
 
 -- =====================
@@ -691,6 +695,8 @@ DECLARE
   v_gap_pct          NUMERIC;
   v_failed           INT;
   v_total            INT;
+  v_ewnaf_overall    NUMERIC;
+  v_ewnaf_high_risk  NUMERIC;
   v_ewnaf_defense    NUMERIC;
   v_gap_pct_combined NUMERIC;
   v_risk_band        TEXT;
@@ -739,13 +745,24 @@ BEGIN
 
   v_gap_pct := CASE WHEN v_total > 0 THEN (v_failed::NUMERIC / v_total) * 100 ELSE 50 END;
 
-  -- Try to get EWNAF defense_score from latest scan result for this org
-  SELECT (r.results->>'defense_score')::NUMERIC
-  INTO   v_ewnaf_defense
+  -- Pull the latest EWNAF scan result for this org (real shape: score.overall, score.high_risk_count)
+  SELECT
+    (r.results->'score'->>'overall')::NUMERIC,
+    (r.results->'score'->>'high_risk_count')::NUMERIC
+  INTO   v_ewnaf_overall, v_ewnaf_high_risk
   FROM   fact_software_results r
   WHERE  r.org_uid = v_org_uid
   ORDER  BY r.created_at DESC
   LIMIT  1;
+
+  -- Derive a 0-100 defense score: starts at 100, reduced by overall risk and high-risk findings
+  IF v_ewnaf_overall IS NOT NULL THEN
+    v_ewnaf_defense := GREATEST(0, LEAST(100,
+      100 - (v_ewnaf_overall * 2) - (COALESCE(v_ewnaf_high_risk, 0) * 15)
+    ));
+  ELSE
+    v_ewnaf_defense := NULL;
+  END IF;
 
   -- Blend: 60% questionnaire gap + 40% EWNAF technical gap (if scan available)
   IF v_ewnaf_defense IS NOT NULL THEN
@@ -830,3 +847,48 @@ BEGIN
     calculated_at  = NOW();
 
 END; $$;
+
+-- =====================
+-- ADDENDUM 3: Evidence Files — file upload registry
+-- Run this block in the Supabase SQL Editor
+-- =====================
+CREATE TABLE IF NOT EXISTS evidence_files (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  session_id    UUID REFERENCES assessment_sessions(id) ON DELETE SET NULL,
+  original_name TEXT NOT NULL,
+  storage_path  TEXT NOT NULL,
+  file_size     BIGINT,
+  content_type  TEXT,
+  category      TEXT DEFAULT 'General',
+  control_ref   TEXT,
+  notes         TEXT,
+  status        TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE evidence_files ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "own evidence_files" ON evidence_files
+  FOR ALL USING (user_id = auth.uid());
+
+CREATE INDEX IF NOT EXISTS idx_evidence_files_user ON evidence_files(user_id);
+
+-- =====================
+-- ADDENDUM 4: priority_rank — correct severity ordering on remediation_roadmap
+-- Text sort puts 'low' above 'medium' alphabetically; this generated column fixes it.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+ALTER TABLE remediation_roadmap
+  ADD COLUMN IF NOT EXISTS priority_rank INT GENERATED ALWAYS AS (
+    CASE priority
+      WHEN 'critical' THEN 0
+      WHEN 'high'     THEN 1
+      WHEN 'medium'   THEN 2
+      WHEN 'low'      THEN 3
+      ELSE 4
+    END
+  ) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_roadmap_priority_rank
+  ON remediation_roadmap(priority_rank);
