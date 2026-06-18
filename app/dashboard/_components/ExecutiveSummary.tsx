@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { BarChart2, AlertTriangle, CheckCircle2, Clock, Download, RefreshCw, ArrowRight } from "lucide-react";
 import styles from "../dashboard.module.css";
 import type { DashboardData } from "../queries";
@@ -97,6 +98,7 @@ const DOT_CLASS: Record<string, string> = {
 };
 
 export default function ExecutiveSummary({ data }: { data: DashboardData }) {
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -111,10 +113,6 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
       setRefreshing(false);
       showToast("✓ Dashboard refreshed — data is up to date");
     }, 1800);
-  }
-
-  function handleDownload() {
-    showToast("⏳ Generating PDF report… this will be ready shortly");
   }
 
   const complianceStatus =
@@ -192,7 +190,9 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
           </button>
           <button
             className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSm}`}
-            onClick={handleDownload}
+            onClick={() => router.push("/dashboard/reports?print=1")}
+            disabled={!data.hasSession}
+            title={!data.hasSession ? "Complete assessment first" : "Download compliance report as PDF"}
           >
             <Download size={14} /> Download Report
           </button>

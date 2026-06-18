@@ -892,3 +892,46 @@ ALTER TABLE remediation_roadmap
 
 CREATE INDEX IF NOT EXISTS idx_roadmap_priority_rank
   ON remediation_roadmap(priority_rank);
+
+-- =====================
+-- ADDENDUM 5: org_invitations — team member invite flow (admin / viewer roles)
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE TABLE IF NOT EXISTS org_invitations (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  invited_email TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'viewer')),
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'revoked')),
+  invited_by    UUID NOT NULL REFERENCES auth.users(id),
+  invited_at    TIMESTAMPTZ DEFAULT now(),
+  accepted_by   UUID REFERENCES auth.users(id),
+  accepted_at   TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_invitations_email  ON org_invitations(invited_email);
+CREATE INDEX IF NOT EXISTS idx_invitations_org    ON org_invitations(org_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_status ON org_invitations(status);
+
+-- RLS
+ALTER TABLE org_invitations ENABLE ROW LEVEL SECURITY;
+
+-- Org owner can manage all invitations for their org
+CREATE POLICY "org owner manages invitations"
+  ON org_invitations FOR ALL
+  TO authenticated
+  USING (
+    org_id IN (SELECT id FROM organizations WHERE user_id = auth.uid())
+  );
+
+-- Invited user can read (and accept) their own invitation
+CREATE POLICY "invited user reads own invitation"
+  ON org_invitations FOR SELECT
+  TO authenticated
+  USING (invited_email = auth.email());
+
+CREATE POLICY "invited user accepts own invitation"
+  ON org_invitations FOR UPDATE
+  TO authenticated
+  USING  (invited_email = auth.email() AND status = 'pending')
+  WITH CHECK (status = 'accepted' AND accepted_by = auth.uid());

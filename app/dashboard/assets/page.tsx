@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { getAssetsData } from "../queries";
+import { queueScanJob } from "../../onboarding/actions";
 import styles from "../dashboard.module.css";
 
 function fmt(n: number) {
@@ -36,8 +38,19 @@ export default async function AssetsPage() {
               : "No network scan data found. Make sure your organization IP is registered and a scan has been completed."}
           </p>
           {data?.orgIp && (
-            <div style={{ display: "inline-flex", gap: "0.5rem", alignItems: "center", background: "rgba(117,76,190,0.08)", border: "1px solid rgba(117,76,190,0.2)", borderRadius: 8, padding: "0.5rem 1rem", fontSize: "0.8rem", color: "rgba(221,215,234,0.6)", fontFamily: "monospace" }}>
-              Registered IP: {data.orgIp}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem" }}>
+              <div style={{ display: "inline-flex", gap: "0.5rem", alignItems: "center", background: "rgba(117,76,190,0.08)", border: "1px solid rgba(117,76,190,0.2)", borderRadius: 8, padding: "0.5rem 1rem", fontSize: "0.8rem", color: "rgba(221,215,234,0.6)", fontFamily: "monospace" }}>
+                Registered IP: {data.orgIp}
+              </div>
+              <form action={async () => {
+                "use server";
+                await queueScanJob();
+                redirect("/scanning");
+              }}>
+                <button type="submit" style={{ background: "rgba(117,76,190,0.15)", border: "1px solid rgba(117,76,190,0.35)", borderRadius: 8, padding: "0.5rem 1.25rem", fontSize: "0.82rem", color: "#c4a8f0", cursor: "pointer", fontWeight: 600 }}>
+                  Request Network Scan
+                </button>
+              </form>
             </div>
           )}
         </div>

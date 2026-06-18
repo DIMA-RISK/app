@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient as createAdminSupabase } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_ROUTES = ["/login", "/register"];
@@ -50,23 +51,56 @@ export async function middleware(request: NextRequest) {
         .from("organizations")
         .select("onboarding_completed")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-      const completed = org?.onboarding_completed ?? false;
+      if (org) {
+        // ── Org owner path ──────────────────────────────────────────────
+        const completed = org.onboarding_completed ?? false;
 
-      // Logged in + public route → smart redirect
-      if (isPublic) {
-        return NextResponse.redirect(new URL(completed ? "/dashboard" : "/welcome", request.url));
-      }
+        if (isPublic) {
+          return NextResponse.redirect(new URL(completed ? "/dashboard" : "/welcome", request.url));
+        }
+        if (completed && (pathname.startsWith("/welcome") || pathname.startsWith("/onboarding"))) {
+          return NextResponse.redirect(new URL("/dashboard", request.url));
+        }
+        if (!completed && pathname.startsWith("/dashboard")) {
+          return NextResponse.redirect(new URL("/welcome", request.url));
+        }
+      } else {
+        // ── Invited-member path ─────────────────────────────────────────
+        // Use service role to look up (and possibly auto-accept) the invite
+        const admin = createAdminSupabase(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        );
 
-      // Already completed → don't let them revisit welcome/onboarding
-      if (completed && (pathname.startsWith("/welcome") || pathname.startsWith("/onboarding"))) {
-        return NextResponse.redirect(new URL("/dashboard", request.url));
-      }
+        const { data: invite } = await admin
+          .from("org_invitations")
+          .select("id, status")
+          .eq("invited_email", user.email ?? "")
+          .in("status", ["pending", "accepted"])
+          .limit(1)
+          .maybeSingle();
 
-      // Incomplete onboarding → cannot access dashboard
-      if (!completed && pathname.startsWith("/dashboard")) {
-        return NextResponse.redirect(new URL("/welcome", request.url));
+        if (invite) {
+          // Auto-accept pending invite on first login
+          if (invite.status === "pending") {
+            await admin
+              .from("org_invitations")
+              .update({ status: "accepted", accepted_by: user.id, accepted_at: new Date().toISOString() })
+              .eq("id", invite.id);
+          }
+          // Member: treat like a completed onboarding owner
+          if (isPublic || pathname.startsWith("/welcome") || pathname.startsWith("/onboarding")) {
+            return NextResponse.redirect(new URL("/dashboard", request.url));
+          }
+          // Allow dashboard access — fall through to supabaseResponse
+        } else {
+          // No org, no invite — redirect away from protected routes
+          if (!isPublic) {
+            return NextResponse.redirect(new URL("/login", request.url));
+          }
+        }
       }
     }
   }

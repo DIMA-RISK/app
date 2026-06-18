@@ -5,9 +5,14 @@ import { Save } from "lucide-react";
 import type { SettingsData } from "../queries";
 import styles from "../dashboard.module.css";
 
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+function Toggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
-    <button className={`${styles.toggle} ${on ? styles.toggleOn : ""}`} onClick={onToggle}>
+    <button
+      className={`${styles.toggle} ${on ? styles.toggleOn : ""}`}
+      onClick={disabled ? undefined : onToggle}
+      disabled={disabled}
+      style={disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
+    >
       <span className={`${styles.toggleKnob} ${on ? styles.toggleOnKnob : ""}`} />
     </button>
   );
@@ -17,10 +22,10 @@ const INDUSTRIES = ["Healthcare", "Healthtech", "Education", "Fintech", "Finance
 const COUNTRIES = ["Canada", "United States"];
 
 export default function SettingsClient({ data }: { data: SettingsData }) {
-  const [notifEmail, setNotifEmail] = useState(true);
-  const [notifWeekly, setNotifWeekly] = useState(true);
-  const [notifCritical, setNotifCritical] = useState(true);
-  const [notifScore, setNotifScore] = useState(false);
+  const [notifEmail] = useState(false);
+  const [notifWeekly] = useState(false);
+  const [notifCritical] = useState(false);
+  const [notifScore] = useState(false);
 
   return (
     <>
@@ -122,17 +127,17 @@ export default function SettingsClient({ data }: { data: SettingsData }) {
           <div className={styles.card}>
             <h2 className={`${styles.cardTitleLg} ${styles.mb1}`}>Notification Preferences</h2>
             {[
-              { label: "Email Alerts", desc: "Receive alerts via email", value: notifEmail, set: setNotifEmail },
-              { label: "Weekly Summary", desc: "Weekly digest of compliance status", value: notifWeekly, set: setNotifWeekly },
-              { label: "Critical Risk Alerts", desc: "Immediate notification for critical findings", value: notifCritical, set: setNotifCritical },
-              { label: "Score Change Alerts", desc: "Notify when risk score changes ±5 pts", value: notifScore, set: setNotifScore },
-            ].map(({ label, desc, value, set }) => (
-              <div key={label} className={styles.toggleRow}>
+              { label: "Email Alerts", desc: "Receive alerts via email", value: notifEmail },
+              { label: "Weekly Summary", desc: "Weekly digest of compliance status", value: notifWeekly },
+              { label: "Critical Risk Alerts", desc: "Immediate notification for critical findings", value: notifCritical },
+              { label: "Score Change Alerts", desc: "Notify when risk score changes ±5 pts", value: notifScore },
+            ].map(({ label, desc, value }) => (
+              <div key={label} className={styles.toggleRow} title="Coming soon">
                 <div className={styles.toggleInfo}>
                   <span className={styles.toggleLabel}>{label}</span>
                   <span className={styles.toggleDesc}>{desc}</span>
                 </div>
-                <Toggle on={value} onToggle={() => set((v) => !v)} />
+                <Toggle on={value} onToggle={() => {}} disabled />
               </div>
             ))}
           </div>

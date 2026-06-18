@@ -3,6 +3,65 @@
 import { createClient } from "../../utils/supabase/server";
 import { createAdminClient } from "../../utils/supabase/admin";
 
+// ─── Org context ──────────────────────────────────────────────────────────────
+// Resolves which org's data this user should see.
+// Org owners → their own data (role: admin).
+// Accepted invited members → the inviting org's data (role: admin | viewer).
+
+interface OrgContext {
+  userId: string;           // org owner's user_id — use for all data queries
+  currentUserId: string;    // actual logged-in user — use for write operations
+  currentUserEmail: string;
+  currentUserMeta: Record<string, unknown>;
+  currentUserCreatedAt: string;
+  role: "admin" | "viewer";
+}
+
+async function getOrgContext(): Promise<OrgContext | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const admin = createAdminClient();
+
+  const { data: org } = await admin
+    .from("organizations")
+    .select("user_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const base = {
+    currentUserId: user.id,
+    currentUserEmail: user.email ?? "",
+    currentUserMeta: (user.user_metadata ?? {}) as Record<string, unknown>,
+    currentUserCreatedAt: user.created_at,
+  };
+
+  if (org) return { ...base, userId: user.id, role: "admin" };
+
+  const { data: invite } = await admin
+    .from("org_invitations")
+    .select("role, organizations!inner(user_id)")
+    .eq("accepted_by", user.id)
+    .eq("status", "accepted")
+    .maybeSingle();
+
+  if (invite) {
+    return {
+      ...base,
+      userId: (invite.organizations as unknown as { user_id: string }).user_id,
+      role: invite.role as "admin" | "viewer",
+    };
+  }
+
+  return null;
+}
+
+export async function getRole(): Promise<"admin" | "viewer" | null> {
+  const ctx = await getOrgContext();
+  return ctx?.role ?? null;
+}
+
 
 export interface DashboardData {
   orgName: string;
@@ -25,9 +84,6 @@ export interface DashboardData {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
@@ -51,20 +107,21 @@ export async function getDashboardData(): Promise<DashboardData> {
     hasSession: false,
   };
 
-  if (!user) return empty;
-
+  const ctx = await getOrgContext();
+  if (!ctx) return empty;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: org } = await admin
     .from("organizations")
     .select("org_name")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .single();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id, framework_id, completed_at")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -87,7 +144,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       admin
         .from("remediation_roadmap")
         .select("title, priority, effort, description")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .eq("status", "open")
         .order("priority_rank")
         .limit(10),
@@ -163,14 +220,14 @@ export interface SettingsData {
 }
 
 export async function getSettingsData(): Promise<SettingsData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
     .select("org_name, email, p_number, industry, org_country, address, dba_name, org_ip, patient_records_count, vendor_count")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .single();
   if (!org) return null;
   return {
@@ -195,27 +252,28 @@ export interface UsersData {
   initials: string;
   orgName: string;
   createdAt: string;
+  role: "admin" | "viewer";
 }
 
 export async function getUsersData(): Promise<UsersData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId, currentUserEmail, currentUserMeta, currentUserCreatedAt, role } = ctx;
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
     .select("org_name")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .single();
-  const email = user.email ?? "";
-  const name = (user.user_metadata?.full_name as string | undefined) ?? email.split("@")[0];
+  const name = (currentUserMeta.full_name as string | undefined) ?? currentUserEmail.split("@")[0];
   const initials = name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
   return {
     name,
-    email,
+    email: currentUserEmail,
     initials,
     orgName: org?.org_name ?? "",
-    createdAt: user.created_at,
+    createdAt: currentUserCreatedAt,
+    role,
   };
 }
 
@@ -242,15 +300,15 @@ export interface ComplianceData {
 }
 
 export async function getComplianceData(): Promise<ComplianceData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id, framework_id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -299,15 +357,15 @@ export interface AnalyticsData {
 }
 
 export async function getAnalyticsData(): Promise<AnalyticsData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -372,21 +430,21 @@ export interface ActionPlanData {
 }
 
 export async function getActionPlanData(): Promise<ActionPlanData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   const [roadmapResult, riskResult] = await Promise.all([
-    admin.from("remediation_roadmap").select("id, title, description, priority, effort, status, category, due_date").eq("user_id", user.id).order("priority_rank").order("created_at", { ascending: false }),
+    admin.from("remediation_roadmap").select("id, title, description, priority, effort, status, category, due_date").eq("user_id", userId).order("priority_rank").order("created_at", { ascending: false }),
     session ? admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
 
@@ -444,15 +502,15 @@ export interface QuestionnaireData {
 }
 
 export async function getQuestionnaireData(): Promise<QuestionnaireData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id, framework_id")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -516,34 +574,36 @@ export interface AssetsData {
 }
 
 export async function getAssetsData(): Promise<AssetsData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_uid, org_ip")
-    .eq("user_id", user.id)
+    .select("id, org_uid, org_ip")
+    .eq("user_id", userId)
     .single();
 
-  if (!org?.org_uid) return { orgIp: org?.org_ip ?? null, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  const orgUid = org?.org_uid ?? org?.id ?? null;
+  if (!orgUid) return { orgIp: org?.org_ip ?? null, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
 
   const { data: scan } = await admin
     .from("fact_software_results")
     .select("results, created_at")
-    .eq("org_uid", org.org_uid)
+    .eq("org_uid", orgUid)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!scan?.results) return { orgIp: org.org_ip ?? null, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  const orgIp = org?.org_ip ?? null;
+  if (!scan?.results) return { orgIp, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
 
   const r = scan.results as Record<string, unknown>;
   const noScope = r.audit_status === "NO_SCOPE" || !Array.isArray(r.devices) || (r.devices as unknown[]).length === 0;
 
   return {
-    orgIp: org.org_ip ?? null,
+    orgIp,
     auditStatus: (r.audit_status as string) ?? null,
     globalScore: Number(r.global_score ?? 0),
     defenseLevel: (r.defense_level as string) ?? null,
@@ -570,20 +630,20 @@ export interface ReportsData {
 }
 
 export async function getReportsData(): Promise<ReportsData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
-  const { data: org } = await admin.from("organizations").select("org_name, industry, org_country, email").eq("user_id", user.id).single();
-  const { data: session } = await admin.from("assessment_sessions").select("id, framework_id, completed_at").eq("user_id", user.id).order("started_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: org } = await admin.from("organizations").select("org_name, industry, org_country, email").eq("user_id", userId).single();
+  const { data: session } = await admin.from("assessment_sessions").select("id, framework_id, completed_at").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle();
   if (!session) return null;
 
   const [riskResult, financialResult, maturityResult, roadmapResult, responsesResult] = await Promise.all([
     admin.from("risk_scores").select("total_score, risk_band, likelihood_score, impact_score, control_score").eq("session_id", session.id).maybeSingle(),
     admin.from("financial_impact").select("estimated_breach_cost, regulatory_fines_min, regulatory_fines_max, total_exposure_min, total_exposure_max, currency").eq("session_id", session.id).maybeSingle(),
     admin.from("maturity_scores").select("domain, raw_score, maturity_level, label").eq("session_id", session.id),
-    admin.from("remediation_roadmap").select("title, priority, effort, description").eq("user_id", user.id).order("priority_rank").limit(20),
+    admin.from("remediation_roadmap").select("title, priority, effort, description").eq("user_id", userId).order("priority_rank").limit(20),
     admin.from("questionnaire_responses").select("response").eq("session_id", session.id),
   ]);
 
@@ -622,15 +682,15 @@ export interface AlertsData {
 }
 
 export async function getAlertsData(): Promise<AlertsData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const { data: session } = await admin
     .from("assessment_sessions")
     .select("id, framework_id, completed_at")
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -640,7 +700,7 @@ export async function getAlertsData(): Promise<AlertsData | null> {
   const [riskResult, maturityResult, roadmapResult, responsesResult, financialResult] = await Promise.all([
     admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle(),
     admin.from("maturity_scores").select("domain, raw_score, maturity_level").eq("session_id", session.id).order("raw_score"),
-    admin.from("remediation_roadmap").select("id, title, priority, status, category").eq("user_id", user.id).eq("status", "open").order("priority_rank").limit(8),
+    admin.from("remediation_roadmap").select("id, title, priority, status, category").eq("user_id", userId).eq("status", "open").order("priority_rank").limit(8),
     admin.from("questionnaire_responses").select("response").eq("session_id", session.id),
     admin.from("financial_impact").select("total_exposure_max, currency").eq("session_id", session.id).maybeSingle(),
   ]);
@@ -739,17 +799,17 @@ export interface EvidenceData {
 }
 
 export async function getEvidenceData(): Promise<EvidenceData | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
   const admin = createAdminClient();
 
   const [filesResult, roadmapResult] = await Promise.all([
     admin.from("evidence_files")
       .select("id, original_name, storage_path, file_size, content_type, category, control_ref, notes, created_at")
-      .eq("user_id", user.id).eq("status", "active").order("created_at", { ascending: false }),
+      .eq("user_id", userId).eq("status", "active").order("created_at", { ascending: false }),
     admin.from("remediation_roadmap").select("title, priority")
-      .eq("user_id", user.id).eq("status", "open")
+      .eq("user_id", userId).eq("status", "open")
       .in("priority", ["critical", "high"]).order("priority_rank").limit(8),
   ]);
 
@@ -774,9 +834,10 @@ export async function getEvidenceData(): Promise<EvidenceData | null> {
 }
 
 export async function uploadEvidenceFile(formData: FormData): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  const ctx = await getOrgContext();
+  if (!ctx) return { error: "Not authenticated" };
+  if (ctx.role !== "admin") return { error: "Viewers cannot upload evidence files" };
+  const { currentUserId, userId } = ctx;
 
   const file = formData.get("file") as File | null;
   if (!file || file.size === 0) return { error: "No file provided" };
@@ -796,7 +857,7 @@ export async function uploadEvidenceFile(formData: FormData): Promise<{ error?: 
 
   const goForm = new FormData();
   goForm.append("file", file);
-  goForm.append("user_id", user.id);
+  goForm.append("user_id", currentUserId);
 
   let uploadRes: Response;
   try {
@@ -817,11 +878,11 @@ export async function uploadEvidenceFile(formData: FormData): Promise<{ error?: 
 
   const admin = createAdminClient();
   const { data: session } = await admin.from("assessment_sessions")
-    .select("id").eq("user_id", user.id)
+    .select("id").eq("user_id", userId)
     .order("started_at", { ascending: false }).limit(1).maybeSingle();
 
   const { error } = await admin.from("evidence_files").insert({
-    user_id: user.id,
+    user_id: userId,
     session_id: session?.id ?? null,
     original_name: result.original_name,
     storage_path: result.storage_path,
@@ -837,14 +898,28 @@ export async function uploadEvidenceFile(formData: FormData): Promise<{ error?: 
   return {};
 }
 
+export async function getAlertCount(): Promise<number> {
+  const ctx = await getOrgContext();
+  if (!ctx) return 0;
+  const admin = createAdminClient();
+  const { count } = await admin
+    .from("remediation_roadmap")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", ctx.userId)
+    .eq("status", "open")
+    .in("priority", ["critical", "high"]);
+  return count ?? 0;
+}
+
 export async function deleteEvidenceFile(id: string): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  const ctx = await getOrgContext();
+  if (!ctx) return { error: "Not authenticated" };
+  if (ctx.role !== "admin") return { error: "Viewers cannot delete evidence files" };
+  const { userId } = ctx;
 
   const admin = createAdminClient();
   const { data: file } = await admin.from("evidence_files")
-    .select("storage_path").eq("id", id).eq("user_id", user.id).single();
+    .select("storage_path").eq("id", id).eq("user_id", userId).single();
 
   if (!file) return { error: "File not found" };
 
@@ -857,7 +932,44 @@ export async function deleteEvidenceFile(id: string): Promise<{ error?: string }
     ).catch(() => { /* best-effort — still delete DB row */ });
   }
 
-  const { error } = await admin.from("evidence_files").delete().eq("id", id).eq("user_id", user.id);
+  const { error } = await admin.from("evidence_files").delete().eq("id", id).eq("user_id", userId);
   if (error) return { error: error.message };
   return {};
+}
+
+// ─── Org Invitations ──────────────────────────────────────────────────────────
+
+export interface OrgInvitation {
+  id: string;
+  invitedEmail: string;
+  role: "admin" | "viewer";
+  status: "pending" | "accepted" | "revoked";
+  invitedAt: string;
+  acceptedAt: string | null;
+}
+
+export async function getOrgInvitations(): Promise<OrgInvitation[]> {
+  const ctx = await getOrgContext();
+  if (!ctx || ctx.role !== "admin") return [];
+  const admin = createAdminClient();
+  const { data: org } = await admin
+    .from("organizations")
+    .select("id")
+    .eq("user_id", ctx.userId)
+    .single();
+  if (!org) return [];
+  const { data } = await admin
+    .from("org_invitations")
+    .select("id, invited_email, role, status, invited_at, accepted_at")
+    .eq("org_id", org.id)
+    .in("status", ["pending", "accepted"])
+    .order("invited_at", { ascending: false });
+  return (data ?? []).map((i) => ({
+    id: i.id,
+    invitedEmail: i.invited_email,
+    role: i.role as "admin" | "viewer",
+    status: i.status as "pending" | "accepted" | "revoked",
+    invitedAt: i.invited_at,
+    acceptedAt: i.accepted_at ?? null,
+  }));
 }

@@ -37,7 +37,7 @@ const NAV = [
     section: "Insights",
     items: [
       { href: "/dashboard/analytics", icon: TrendingUp, label: "Analytics" },
-      { href: "/dashboard/alerts", icon: Bell, label: "Alerts", badge: 3 },
+      { href: "/dashboard/alerts", icon: Bell, label: "Alerts" },
       { href: "/dashboard/reports", icon: FileText, label: "Reports" },
     ],
   },
@@ -53,9 +53,10 @@ const NAV = [
 interface Props {
   collapsed: boolean;
   onToggle: () => void;
+  alertCount: number;
 }
 
-export default function Sidebar({ collapsed, onToggle }: Props) {
+export default function Sidebar({ collapsed, onToggle, alertCount }: Props) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -97,8 +98,8 @@ export default function Sidebar({ collapsed, onToggle }: Props) {
                 >
                   <Icon size={17} className={styles.navIcon} />
                   {!collapsed && <span className={styles.navLabel}>{item.label}</span>}
-                  {!collapsed && item.badge && (
-                    <span className={styles.navBadge}>{item.badge}</span>
+                  {!collapsed && item.href === "/dashboard/alerts" && alertCount > 0 && (
+                    <span className={styles.navBadge}>{alertCount}</span>
                   )}
                 </Link>
               );

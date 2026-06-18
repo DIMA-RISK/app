@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Printer } from "lucide-react";
 import type { ReportsData } from "../queries";
 import styles from "../dashboard.module.css";
@@ -22,8 +24,16 @@ function ScoreBar({ value, max = 100, color }: { value: number; max?: number; co
 }
 
 export default function ReportsClient({ data }: { data: ReportsData }) {
+  const params = useSearchParams();
   const bandColor = BAND_COLOR[data.risk.band] ?? "#f59e0b";
   const generatedDate = new Date(data.generatedAt).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" });
+
+  useEffect(() => {
+    if (params.get("print") === "1") {
+      const t = setTimeout(() => window.print(), 600);
+      return () => clearTimeout(t);
+    }
+  }, [params]);
 
   return (
     <>

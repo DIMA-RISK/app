@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { getReportsData } from "../queries";
 import ReportsClient from "./ReportsClient";
 import styles from "../dashboard.module.css";
@@ -11,5 +12,9 @@ export default async function ReportsPage() {
       </div>
     );
   }
-  return <ReportsClient data={data} />;
+  return (
+    <Suspense fallback={null}>
+      <ReportsClient data={data} />
+    </Suspense>
+  );
 }

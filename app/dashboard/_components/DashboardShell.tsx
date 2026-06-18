@@ -5,12 +5,12 @@ import Sidebar from "./Sidebar";
 import TopNav from "./TopNav";
 import styles from "../dashboard.module.css";
 
-export default function DashboardShell({ children }: { children: ReactNode }) {
+export default function DashboardShell({ children, alertCount }: { children: ReactNode; alertCount: number }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className={styles.shell}>
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} alertCount={alertCount} />
       <div className={collapsed ? `${styles.main} ${styles.mainCollapsed}` : styles.main}>
         <TopNav />
         <main className={styles.content}>{children}</main>

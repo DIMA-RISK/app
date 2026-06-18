@@ -136,18 +136,23 @@ export async function queueScanJob() {
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_uid, org_ip")
+    .select("id, org_uid, org_ip")
     .eq("user_id", user.id)
     .single();
 
   if (!org?.org_ip) return { error: null }; // no IP configured — skip scan silently
-  if (!org?.org_uid) return { error: null }; // org_uid not set yet — skip
+
+  // Auto-derive org_uid from Supabase org id if it was never set
+  let orgUid = org.org_uid ?? org.id;
+  if (!org.org_uid) {
+    await admin.from("organizations").update({ org_uid: orgUid }).eq("user_id", user.id);
+  }
 
   // Avoid duplicate queued jobs for the same org
   const { data: existing } = await admin
     .from("software_queue")
     .select("id")
-    .eq("org_uid", org.org_uid)
+    .eq("org_uid", orgUid)
     .in("status", ["queued", "running"])
     .limit(1)
     .maybeSingle();
@@ -156,7 +161,7 @@ export async function queueScanJob() {
 
   const { error } = await admin.from("software_queue").insert({
     job_id: Date.now(),
-    org_uid: org.org_uid,
+    org_uid: orgUid,
     org_ip: org.org_ip,
     status: "queued",
   });
@@ -172,17 +177,20 @@ export async function checkScanStatus(): Promise<{ done: boolean; error: string 
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_uid, org_ip")
+    .select("id, org_uid, org_ip")
     .eq("user_id", user.id)
     .single();
 
-  // No scan was queued if org_uid or org_ip is missing — let the user proceed
-  if (!org?.org_uid || !org?.org_ip) return { done: true, error: null };
+  // No IP means scan was never submitted — let the user proceed
+  if (!org?.org_ip) return { done: true, error: null };
+
+  // Use the derived org_uid (same fallback as queueScanJob)
+  const orgUid = org.org_uid ?? org.id;
 
   const { data: result } = await admin
     .from("fact_software_results")
     .select("job_id")
-    .eq("org_uid", org.org_uid)
+    .eq("org_uid", orgUid)
     .limit(1)
     .maybeSingle();
 
