@@ -803,7 +803,7 @@ export async function getReportsData(): Promise<ReportsData | null> {
   };
 }
 
-// ─── Alerts (derived — no separate table) ─────────────────────────────────────
+// ─── Alerts (derived — no separate table; read/dismissed state in alert_states) ─
 
 export interface AlertItem {
   id: string;
@@ -811,6 +811,7 @@ export interface AlertItem {
   title: string;
   body: string;
   createdAt: string;
+  read: boolean;
 }
 
 export interface AlertsData {
@@ -841,7 +842,7 @@ export async function getAlertsData(): Promise<AlertsData | null> {
     admin.from("financial_impact").select("total_exposure_max, currency").eq("session_id", session.id).maybeSingle(),
   ]);
 
-  const alerts: AlertItem[] = [];
+  const alerts: Omit<AlertItem, "read">[] = [];
   const now = new Date().toISOString();
   const assessedAt = session.completed_at ?? now;
 
@@ -912,7 +913,18 @@ export async function getAlertsData(): Promise<AlertsData | null> {
       createdAt: session.completed_at });
   }
 
-  return { alerts };
+  const alertIds = alerts.map((a) => a.id);
+  const { data: states } = alertIds.length > 0
+    ? await admin.from("alert_states").select("alert_id, read_at, dismissed_at").eq("user_id", userId).in("alert_id", alertIds)
+    : { data: [] as { alert_id: string; read_at: string | null; dismissed_at: string | null }[] };
+
+  const stateMap = new Map((states ?? []).map((s) => [s.alert_id, s]));
+
+  const result: AlertItem[] = alerts
+    .filter((a) => !stateMap.get(a.id)?.dismissed_at)
+    .map((a) => ({ ...a, read: a.type === "success" || !!stateMap.get(a.id)?.read_at }));
+
+  return { alerts: result };
 }
 
 // ─── Evidence Files ────────────────────────────────────────────────────────────
@@ -1034,19 +1046,6 @@ export async function uploadEvidenceFile(formData: FormData): Promise<{ error?: 
   return {};
 }
 
-export async function getAlertCount(): Promise<number> {
-  const ctx = await getOrgContext();
-  if (!ctx) return 0;
-  const admin = createAdminClient();
-  const { count } = await admin
-    .from("remediation_roadmap")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", ctx.userId)
-    .eq("status", "open")
-    .in("priority", ["critical", "high"]);
-  return count ?? 0;
-}
-
 // ─── Top Nav ──────────────────────────────────────────────────────────────────
 
 export interface TopNavAlert {
@@ -1109,37 +1108,24 @@ export async function getTopNavData(): Promise<TopNavData> {
 
   const orgUid = orgResult.data?.org_uid ?? orgResult.data?.id ?? null;
 
-  const [riskResult, frameworkResult, roadmapResult, countResult, scanResult] = await Promise.all([
+  const [riskResult, frameworkResult, scanResult, alertsData] = await Promise.all([
     admin.from("risk_scores").select("total_score, risk_band, calculated_at").eq("session_id", session.id).maybeSingle(),
     admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle(),
-    admin
-      .from("remediation_roadmap")
-      .select("title, priority")
-      .eq("user_id", userId)
-      .eq("status", "open")
-      .in("priority", ["critical", "high"])
-      .order("priority_rank")
-      .limit(3),
-    admin
-      .from("remediation_roadmap")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("status", "open")
-      .in("priority", ["critical", "high"]),
     orgUid
       ? admin.from("fact_software_results").select("created_at").eq("org_uid", orgUid).order("created_at", { ascending: false }).limit(1).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    getAlertsData(),
   ]);
 
-  const alertTimestamp = riskResult.data?.calculated_at ?? session.completed_at ?? null;
+  // Badge count + dropdown preview both come from the same unread-alert source
+  // that powers the Alerts page, so dismissing/reading an alert there keeps these in sync.
+  const unreadAlerts = (alertsData?.alerts ?? []).filter((a) => !a.read);
 
-  const recentAlerts: TopNavAlert[] = alertTimestamp
-    ? (roadmapResult.data ?? []).map((t) => ({
-        type: t.priority === "critical" ? "critical" : "warning",
-        title: t.title.length > 55 ? t.title.slice(0, 55) + "…" : t.title,
-        createdAt: alertTimestamp,
-      }))
-    : [];
+  const recentAlerts: TopNavAlert[] = unreadAlerts.slice(0, 3).map((a) => ({
+    type: a.type === "success" ? "info" : a.type,
+    title: a.title.length > 55 ? a.title.slice(0, 55) + "…" : a.title,
+    createdAt: a.createdAt,
+  }));
 
   return {
     orgName,
@@ -1152,7 +1138,7 @@ export async function getTopNavData(): Promise<TopNavData> {
       .sort()
       .at(-1) ?? null,
     userEmail: currentUserEmail,
-    alertCount: countResult.count ?? 0,
+    alertCount: unreadAlerts.length,
     recentAlerts,
   };
 }

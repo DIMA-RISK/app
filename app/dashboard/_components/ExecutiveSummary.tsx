@@ -490,6 +490,7 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             <button
               className={`${styles.btn} ${styles.btnPrimary} ${styles.w100}`}
               style={{ justifyContent: "center" }}
+              onClick={() => router.push("/dashboard/actions")}
             >
               Start This Task <ArrowRight size={14} />
             </button>

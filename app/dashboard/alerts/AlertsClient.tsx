@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, AlertCircle, Info, CheckCircle2, X, Bell } from "lucide-react";
 import type { AlertItem } from "../queries";
+import { markAlertRead, markAllAlertsRead, dismissAlert } from "./actions";
 import styles from "../dashboard.module.css";
 
 const ALERT_STYLE: Record<string, { borderClass: string; iconColor: string; iconBg: string }> = {
@@ -25,14 +27,25 @@ function relativeTime(iso: string) {
 }
 
 export default function AlertsClient({ alerts: initial }: { alerts: AlertItem[] }) {
-  const [alerts, setAlerts] = useState(
-    initial.map((a) => ({ ...a, read: a.type === "success" }))
-  );
+  const router = useRouter();
+  const [alerts, setAlerts] = useState(initial);
   const [filter, setFilter] = useState("all");
 
-  const markRead = (id: string) => setAlerts((a) => a.map((al) => al.id === id ? { ...al, read: true } : al));
-  const dismiss  = (id: string) => setAlerts((a) => a.filter((al) => al.id !== id));
-  const markAllRead = () => setAlerts((a) => a.map((al) => ({ ...al, read: true })));
+  const markRead = (id: string) => {
+    setAlerts((a) => a.map((al) => al.id === id ? { ...al, read: true } : al));
+    markAlertRead(id).then(() => router.refresh());
+  };
+
+  const dismiss = (id: string) => {
+    setAlerts((a) => a.filter((al) => al.id !== id));
+    dismissAlert(id).then(() => router.refresh());
+  };
+
+  const markAllRead = () => {
+    const unreadIds = alerts.filter((al) => !al.read).map((al) => al.id);
+    setAlerts((a) => a.map((al) => ({ ...al, read: true })));
+    markAllAlertsRead(unreadIds).then(() => router.refresh());
+  };
 
   const unread = alerts.filter((a) => !a.read).length;
   const filtered = filter === "all" ? alerts

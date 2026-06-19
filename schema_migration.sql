@@ -935,3 +935,28 @@ CREATE POLICY "invited user accepts own invitation"
   TO authenticated
   USING  (invited_email = auth.email() AND status = 'pending')
   WITH CHECK (status = 'accepted' AND accepted_by = auth.uid());
+
+-- =====================
+-- ADDENDUM 6: alert_states — persisted read/dismissed status for generated alerts
+-- Alerts on the Alerts page are computed on the fly from risk/compliance/roadmap
+-- data (no underlying row per alert). This table tracks per-user read/dismissed
+-- state keyed by the deterministic alert id (e.g. "risk-critical", "task-<uuid>")
+-- so "Mark read" / "Dismiss" persist across reloads and the sidebar badge count
+-- stays in sync with the Alerts page.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE TABLE IF NOT EXISTS alert_states (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  alert_id     TEXT NOT NULL,
+  read_at      TIMESTAMPTZ,
+  dismissed_at TIMESTAMPTZ,
+  UNIQUE (user_id, alert_id)
+);
+
+ALTER TABLE alert_states ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "own alert_states" ON alert_states
+  FOR ALL USING (user_id = auth.uid());
+
+CREATE INDEX IF NOT EXISTS idx_alert_states_user ON alert_states(user_id);
