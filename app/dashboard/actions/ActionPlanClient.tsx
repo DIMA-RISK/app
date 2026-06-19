@@ -20,6 +20,29 @@ const STATUS_CYCLE: Record<string, "open" | "in_progress" | "resolved"> = {
 };
 const FILTERS = ["all", "open", "in_progress", "resolved", "high", "medium"];
 
+function exportCsv(tasks: ActionPlanData["tasks"]) {
+  const headers = ["Title", "Description", "Category", "Priority", "Effort", "Status", "Due Date"];
+  const rows = tasks.map((t) => [
+    t.title,
+    t.description ?? "",
+    t.category,
+    t.priority,
+    t.effort,
+    t.status,
+    t.dueDate ?? "",
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `action-plan-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
   const router = useRouter();
   const [filter, setFilter] = useState("all");
@@ -69,7 +92,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
           <span className={`${styles.badge} ${styles.badgePurple}`} style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }}>
             Risk Score: <strong style={{ color: bandColor }}>{data.riskScore}</strong>
           </span>
-          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`}><Download size={14} /> Export</button>
+          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => exportCsv(filtered)}><Download size={14} /> Export</button>
         </div>
       </div>
 

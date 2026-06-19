@@ -13,6 +13,30 @@ const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2
 const LIKELIHOOD: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
 const IMPACT: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
 
+function exportCsv(risks: RiskRegisterData["risks"]) {
+  const headers = ["Risk", "Description", "Category", "Likelihood", "Impact", "Priority", "Status", "Effort"];
+  const rows = risks.map((r) => [
+    r.title,
+    r.description ?? "",
+    r.category,
+    LIKELIHOOD[r.priority] ?? "Medium",
+    IMPACT[r.priority] ?? "Medium",
+    r.priority,
+    r.status,
+    r.effort,
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `risk-register-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function RiskRegisterClient({ data }: { data: RiskRegisterData }) {
   const [filter, setFilter] = useState("all");
 
@@ -38,7 +62,7 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
           <span className={`${styles.badge} ${styles.badgePurple}`} style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }}>
             Risk Score: <strong style={{ color: bandColor }}>{data.riskScore}</strong>
           </span>
-          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`}><Download size={14} /> Export</button>
+          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => exportCsv(sorted)}><Download size={14} /> Export</button>
         </div>
       </div>
 
