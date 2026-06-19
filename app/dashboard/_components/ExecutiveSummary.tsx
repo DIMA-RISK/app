@@ -360,6 +360,11 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
                   <span className={styles.textXs} style={{ color: "#4ade80" }}>
                     ✓ {data.yesCount} passed
                   </span>
+                  {data.partialCount > 0 && (
+                    <span className={styles.textXs} style={{ color: "#fbbf24" }}>
+                      ~ {data.partialCount} partial
+                    </span>
+                  )}
                   <span className={styles.textXs} style={{ color: "#f87171" }}>
                     ✗ {data.noCount} failed
                   </span>

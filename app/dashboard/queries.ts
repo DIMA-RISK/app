@@ -72,6 +72,7 @@ export interface DashboardData {
   openCritical: number;
   yesCount: number;
   noCount: number;
+  partialCount: number;
   totalControls: number;
   frameworkId: string | null;
   frameworkName: string | null;
@@ -97,6 +98,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     openCritical: 0,
     yesCount: 0,
     noCount: 0,
+    partialCount: 0,
     totalControls: 0,
     frameworkId: null,
     frameworkName: null,
@@ -205,6 +207,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     openCritical: tasks.filter((t) => t.priority === "critical").length,
     yesCount,
     noCount,
+    partialCount,
     totalControls: applicable,
     frameworkId: session.framework_id,
     frameworkName: frameworkResult.data?.name ?? session.framework_id,
