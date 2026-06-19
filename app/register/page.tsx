@@ -78,8 +78,17 @@ export default function RegisterPage() {
       options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome` },
     });
 
-    if (signUpError || !signUpData.user) {
-      setError(signUpError?.message ?? "Could not create account.");
+    if (signUpError) {
+      setError(signUpError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Supabase returns a user with no identities (no error) when the email is
+    // already registered and confirmed — this prevents account enumeration,
+    // but we still need to surface something actionable to the user.
+    if (!signUpData.user || signUpData.user.identities?.length === 0) {
+      setError("An account with this email already exists. Try logging in, or use a different email.");
       setLoading(false);
       return;
     }
