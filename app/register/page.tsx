@@ -69,9 +69,24 @@ export default function RegisterPage() {
 
     setLoading(true);
 
-    const { error: err } = await registerOrganization({
-      email: data.get("organizationEmail") as string,
+    const email = data.get("organizationEmail") as string;
+    const supabase = createClient();
+
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email,
       password,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome` },
+    });
+
+    if (signUpError || !signUpData.user) {
+      setError(signUpError?.message ?? "Could not create account.");
+      setLoading(false);
+      return;
+    }
+
+    const { error: err } = await registerOrganization({
+      userId: signUpData.user.id,
+      email,
       org_name: data.get("organizationName") as string,
       p_number: data.get("organizationPhone") as string,
       industry: data.get("industry") as string,
@@ -87,14 +102,13 @@ export default function RegisterPage() {
       return;
     }
 
-    // Sign in right after registration
-    const supabase = createClient();
-    await supabase.auth.signInWithPassword({
-      email: data.get("organizationEmail") as string,
-      password,
-    });
-
-    router.push("/welcome");
+    // If email confirmation is required, signUp() won't return a session —
+    // send the user to check their inbox. Otherwise they're already signed in.
+    if (signUpData.session) {
+      router.push("/welcome");
+    } else {
+      router.push(`/register/check-email?email=${encodeURIComponent(email)}`);
+    }
   }
 
   return (
