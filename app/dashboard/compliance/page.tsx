@@ -1,5 +1,5 @@
 import { getComplianceData } from "../queries";
-import { Download } from "lucide-react";
+import ComplianceExportButton from "./ComplianceExportButton";
 import styles from "../dashboard.module.css";
 
 const BAND_COLOR: Record<string, string> = {
@@ -42,7 +42,7 @@ export default async function CompliancePage() {
           </p>
         </div>
         <div className={styles.pageActions}>
-          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`}><Download size={14} /> Export</button>
+          <ComplianceExportButton data={data} />
         </div>
       </div>
 
