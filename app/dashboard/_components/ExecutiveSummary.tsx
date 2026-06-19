@@ -211,17 +211,17 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
         <div className={styles.statCard}>
           <div className={styles.statCardTop}>
             <span className={styles.statCardLabel}>Risk Score</span>
-            <div className={`${styles.statCardIcon} ${styles.iconRed}`}>
+            <div className={`${styles.statCardIcon} ${data.riskBand === "low" ? styles.iconGreen : data.riskBand === "medium" ? styles.iconAmber : styles.iconRed}`}>
               <AlertTriangle size={16} />
             </div>
           </div>
-          <div className={styles.statCardValue}>
+          <div className={styles.statCardValue} style={{ color: data.riskBand === "low" ? "#22c55e" : data.riskBand === "medium" ? "#f59e0b" : data.riskBand === "high" ? "#f97316" : data.riskBand === "critical" ? "#ef4444" : undefined }}>
             {data.riskScore > 0 ? data.riskScore : "—"}
             <span style={{ fontSize: "1rem", color: "rgba(221,215,234,0.4)" }}>/100</span>
           </div>
           <div className={styles.statCardSub}>
             {data.riskBand ? (
-              <span className={styles.trendUp}>{riskBandLabel}</span>
+              <span style={{ color: data.riskBand === "low" ? "#22c55e" : data.riskBand === "medium" ? "#f59e0b" : data.riskBand === "high" ? "#f97316" : "#ef4444" }}>{riskBandLabel}</span>
             ) : (
               <span>Complete assessment to score</span>
             )}

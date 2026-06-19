@@ -580,6 +580,77 @@ export async function getQuestionnaireData(): Promise<QuestionnaireData | null> 
   };
 }
 
+// ─── Dashboard Readiness ──────────────────────────────────────────────────────
+
+export interface DashboardReadiness {
+  questionnaireAnswered: boolean;
+  hasOrgIp: boolean;
+  scanCompleted: boolean;
+  scoreNeedsUpdate: boolean;
+}
+
+export async function getDashboardReadiness(): Promise<DashboardReadiness | null> {
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  const { userId } = ctx;
+  const admin = createAdminClient();
+
+  const { data: org } = await admin
+    .from("organizations")
+    .select("id, org_uid, org_ip")
+    .eq("user_id", userId)
+    .single();
+
+  const orgUid = org?.org_uid ?? org?.id ?? null;
+
+  const { data: session } = await admin
+    .from("assessment_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!session) {
+    return { questionnaireAnswered: false, hasOrgIp: !!org?.org_ip, scanCompleted: false, scoreNeedsUpdate: false };
+  }
+
+  const [{ count: responseCount }, scoreRow] = await Promise.all([
+    admin.from("questionnaire_responses")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", session.id),
+    admin.from("risk_scores")
+      .select("calculated_at")
+      .eq("session_id", session.id)
+      .maybeSingle(),
+  ]);
+
+  let scanCompletedAt: string | null = null;
+  if (orgUid) {
+    const { data: scan } = await admin
+      .from("fact_software_results")
+      .select("created_at, results")
+      .eq("org_uid", orgUid)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (scan?.results != null) scanCompletedAt = scan.created_at ?? null;
+  }
+
+  const scoreCalculatedAt = scoreRow.data?.calculated_at ?? null;
+  const scoreNeedsUpdate = !!scanCompletedAt && (
+    !scoreCalculatedAt ||
+    new Date(scanCompletedAt) > new Date(scoreCalculatedAt)
+  );
+
+  return {
+    questionnaireAnswered: (responseCount ?? 0) > 0,
+    hasOrgIp: !!org?.org_ip,
+    scanCompleted: !!scanCompletedAt,
+    scoreNeedsUpdate,
+  };
+}
+
 // ─── Assets ───────────────────────────────────────────────────────────────────
 
 export interface AssetsData {
