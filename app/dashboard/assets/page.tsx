@@ -87,7 +87,9 @@ export default async function AssetsPage() {
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>Assets &amp; Network Scan</h1>
           <p className={styles.pageSubtitle}>
-            {data.devices.length} device{data.devices.length !== 1 ? "s" : ""} discovered
+            {data.devices.length > 0
+              ? `${data.devices.length} device${data.devices.length !== 1 ? "s" : ""} discovered`
+              : "Scan complete · no public-facing assets found"}
             {data.scannedAt ? ` · Last scan: ${new Date(data.scannedAt).toLocaleDateString("en-CA")}` : ""}
           </p>
         </div>
@@ -101,21 +103,44 @@ export default async function AssetsPage() {
           <div className={styles.statCardSub}>{data.defenseLevel ?? ""}</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Global Score</span><div className={`${styles.statCardIcon} ${styles.iconBlue}`} /></div>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Risk Score</span><div className={`${styles.statCardIcon} ${styles.iconBlue}`} /></div>
           <div className={styles.statCardValue} style={{ fontSize: "1.75rem" }}>{fmt(data.globalScore)}</div>
-          <div className={styles.statCardSub}>attack-surface score</div>
+          <div className={styles.statCardSub}>aggregate risk score</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Devices Found</span><div className={`${styles.statCardIcon} ${styles.iconGreen}`} /></div>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Hosts Found</span><div className={`${styles.statCardIcon} ${styles.iconGreen}`} /></div>
           <div className={styles.statCardValue} style={{ fontSize: "1.75rem" }}>{data.devices.length}</div>
           <div className={styles.statCardSub}>public-facing assets</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Scan Status</span><div className={`${styles.statCardIcon} ${styles.iconAmber}`} /></div>
-          <div className={styles.statCardValue} style={{ fontSize: "1rem", color: "#22c55e", fontWeight: 700 }}>{data.auditStatus ?? "COMPLETE"}</div>
-          {data.orgIp && <div className={styles.statCardSub} style={{ fontFamily: "monospace", fontSize: "0.7rem" }}>{data.orgIp}</div>}
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>High-Risk Findings</span><div className={`${styles.statCardIcon} ${styles.iconAmber}`} /></div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.75rem", color: data.highRiskCount > 0 ? "#ef4444" : "#22c55e" }}>{data.highRiskCount}</div>
+          <div className={styles.statCardSub}>{data.orgIp ?? "scanned IP"}</div>
         </div>
       </div>
+
+      {/* No public assets found after a completed scan */}
+      {data.devices.length === 0 && (
+        <div className={styles.card} style={{ textAlign: "center", padding: "2.5rem 2rem" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "0.6rem" }}>🛡️</div>
+          <div style={{ fontWeight: 700, color: "#ddd7ea", fontSize: "1rem", marginBottom: "0.4rem" }}>No Public Assets Detected</div>
+          <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.55)", maxWidth: 460, margin: "0 auto 1rem" }}>
+            EWNAF completed the scan of{data.orgIp ? <> <span style={{ fontFamily: "monospace", color: "rgba(221,215,234,0.7)" }}>{data.orgIp}</span></> : " your registered IP"} but found no publicly reachable services or devices.
+            This typically means the IP is behind NAT, a firewall, or a residential gateway. If you believe this is incorrect, request a new scan after confirming your network configuration.
+          </p>
+          {data.orgIp && (
+            <form action={async () => {
+              "use server";
+              await queueScanJob();
+              redirect("/scanning");
+            }}>
+              <button type="submit" style={{ background: "rgba(117,76,190,0.15)", border: "1px solid rgba(117,76,190,0.35)", borderRadius: 8, padding: "0.5rem 1.25rem", fontSize: "0.82rem", color: "#c4a8f0", cursor: "pointer", fontWeight: 600 }}>
+                Request New Scan
+              </button>
+            </form>
+          )}
+        </div>
+      )}
 
       {/* Devices table */}
       {data.devices.length > 0 && (
@@ -127,28 +152,30 @@ export default async function AssetsPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Host / IP</th>
-                  <th>Type</th>
+                  <th>Hostname</th>
+                  <th>IP Address</th>
                   <th>Open Ports</th>
                   <th>Grade</th>
-                  <th>Score</th>
+                  <th>Risk Score</th>
                 </tr>
               </thead>
               <tbody>
                 {data.devices.map((device, i) => {
-                  const host = (device.host ?? device.ip ?? device.hostname ?? `Device ${i + 1}`) as string;
-                  const devType = (device.type ?? device.device_type ?? "Unknown") as string;
-                  const ports = Array.isArray(device.open_ports) ? (device.open_ports as number[]).join(", ") : (device.ports as string) ?? "—";
-                  const grade = (device.grade ?? device.overall_grade ?? null) as string | null;
-                  const score = Number(device.score ?? device.global_score ?? 0);
+                  const host = (device.host ?? device.hostname ?? `Host ${i + 1}`) as string;
+                  const ip = (device.ip ?? "") as string;
+                  const ports = Array.isArray(device.open_ports) && (device.open_ports as number[]).length > 0
+                    ? (device.open_ports as number[]).join(", ")
+                    : "—";
+                  const grade = (device.grade ?? null) as string | null;
+                  const riskScore = Number(device.risk_score ?? 0);
                   const dgc = gradeColor(grade);
                   return (
                     <tr key={i}>
                       <td><span style={{ fontFamily: "monospace", fontSize: "0.82rem", color: "#ddd7ea" }}>{host}</span></td>
-                      <td><span className={`${styles.badge} ${styles.badgePurple}`}>{devType}</span></td>
+                      <td><span style={{ fontFamily: "monospace", fontSize: "0.78rem", color: "rgba(221,215,234,0.55)" }}>{ip || "—"}</span></td>
                       <td><span className={styles.textXs} style={{ fontFamily: "monospace", color: "rgba(221,215,234,0.55)" }}>{ports}</span></td>
                       <td><span style={{ fontWeight: 700, color: dgc }}>{grade ?? "—"}</span></td>
-                      <td><span style={{ color: "rgba(221,215,234,0.7)", fontSize: "0.85rem" }}>{score > 0 ? fmt(score) : "—"}</span></td>
+                      <td><span style={{ color: "rgba(221,215,234,0.7)", fontSize: "0.85rem" }}>{riskScore}</span></td>
                     </tr>
                   );
                 })}

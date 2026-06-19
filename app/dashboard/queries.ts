@@ -586,6 +586,7 @@ export interface AssetsData {
   orgIp: string | null;
   auditStatus: string | null;
   globalScore: number;
+  highRiskCount: number;
   defenseLevel: string | null;
   overallGrade: string | null;
   devices: Record<string, unknown>[];
@@ -608,7 +609,7 @@ export async function getAssetsData(): Promise<AssetsData | null> {
     .single();
 
   const orgUid = org?.org_uid ?? org?.id ?? null;
-  if (!orgUid) return { orgIp: org?.org_ip ?? null, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  if (!orgUid) return { orgIp: org?.org_ip ?? null, auditStatus: null, globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
 
   const { data: scan } = await admin
     .from("fact_software_results")
@@ -620,23 +621,63 @@ export async function getAssetsData(): Promise<AssetsData | null> {
 
   const orgIp = org?.org_ip ?? null;
   // Row exists but results not yet written — scan is still processing
-  if (scan && !scan.results) return { orgIp, auditStatus: "PENDING", globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: scan.created_at ?? null, noScope: true };
-  if (!scan?.results) return { orgIp, auditStatus: null, globalScore: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  if (scan && !scan.results) return { orgIp, auditStatus: "PENDING", globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: scan.created_at ?? null, noScope: true };
+  if (!scan?.results) return { orgIp, auditStatus: null, globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
 
   const r = scan.results as Record<string, unknown>;
-  const noScope = r.audit_status === "NO_SCOPE" || !Array.isArray(r.devices) || (r.devices as unknown[]).length === 0;
+  const score = (r.score ?? {}) as Record<string, unknown>;
+  const topology = (r.topology ?? {}) as Record<string, unknown>;
+
+  // EWNAF stores host data in topology.nodes (keyed by IP), not score.by_host
+  const nodes = (topology.nodes ?? {}) as Record<string, Record<string, unknown>>;
+  const devices = Object.values(nodes).map((node) => {
+    const openPorts = Array.isArray(node.ports)
+      ? (node.ports as Array<{ state: string; number: number; protocol: string }>)
+          .filter((p) => p.state === "open")
+          .map((p) => p.number)
+      : [];
+    const riskScore = Number(node.risk_score ?? 0);
+    return {
+      host: (node.hostname ?? node.ip ?? node.key) as string,
+      ip: (node.ip ?? "") as string,
+      open_ports: openPorts,
+      risk_score: riskScore,
+      // Derive letter grade from per-host risk score (0=safe → A)
+      grade: riskScore === 0 ? "A" : riskScore <= 20 ? "B" : riskScore <= 50 ? "C" : riskScore <= 75 ? "D" : "F",
+      type: "Network Host",
+    };
+  });
+
+  const globalScore = Number(score.overall ?? 0);
+  const highRiskCount = Number(score.high_risk_count ?? 0);
+
+  // Derive overall letter grade from aggregate risk score
+  const overallGrade =
+    globalScore === 0 && highRiskCount === 0 ? "A"
+    : globalScore <= 10 ? "A"
+    : globalScore <= 30 ? "B"
+    : globalScore <= 60 ? "C"
+    : globalScore <= 80 ? "D"
+    : "F";
+
+  const networkFindings: Record<string, unknown> = {};
+  if (topology.gateway) networkFindings["Gateway"] = topology.gateway;
+  if (Array.isArray(topology.dns) && (topology.dns as string[]).length > 0) networkFindings["DNS"] = (topology.dns as string[]).join(", ");
+  if (r.security_level) networkFindings["Scan Policy"] = r.security_level;
+  if (r.version) networkFindings["EWNAF Version"] = r.version;
 
   return {
     orgIp,
-    auditStatus: (r.audit_status as string) ?? null,
-    globalScore: Number(r.global_score ?? 0),
-    defenseLevel: (r.defense_level as string) ?? null,
-    overallGrade: (r.overall_grade as string) ?? null,
-    devices: Array.isArray(r.devices) ? (r.devices as Record<string, unknown>[]) : [],
-    networkFindings: (r.network_findings as Record<string, unknown>) ?? {},
-    auditFindings: (r.audit_findings as Record<string, unknown>) ?? {},
-    scannedAt: scan.created_at ?? null,
-    noScope,
+    auditStatus: null,
+    globalScore,
+    highRiskCount,
+    defenseLevel: (r.security_level as string) ?? null,
+    overallGrade,
+    devices,
+    networkFindings,
+    auditFindings: {},
+    scannedAt: (r.ended_at as string) ?? scan.created_at ?? null,
+    noScope: false,
   };
 }
 
