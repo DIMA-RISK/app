@@ -731,11 +731,11 @@ export async function getAssetsData(): Promise<AssetsData | null> {
     : globalScore <= 80 ? "D"
     : "F";
 
+  // topology.gateway and r.version describe DIMA's own scanning infrastructure
+  // (its egress IP and engine build) — never surface those to customers.
   const networkFindings: Record<string, unknown> = {};
-  if (topology.gateway) networkFindings["Gateway"] = topology.gateway;
   if (Array.isArray(topology.dns) && (topology.dns as string[]).length > 0) networkFindings["DNS"] = (topology.dns as string[]).join(", ");
   if (r.security_level) networkFindings["Scan Policy"] = r.security_level;
-  if (r.version) networkFindings["EWNAF Version"] = r.version;
 
   return {
     orgIp,
