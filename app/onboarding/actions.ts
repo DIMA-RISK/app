@@ -231,48 +231,69 @@ async function regenerateRoadmap(
   sessionId: string,
   frameworkId: string,
 ) {
-  const { data: responses } = await admin
+  const { data: allResponses } = await admin
     .from("questionnaire_responses")
     .select("question_id, response")
-    .eq("session_id", sessionId)
-    .in("response", ["no", "partial"]);
+    .eq("session_id", sessionId);
 
-  if (!responses || responses.length === 0) return;
+  if (!allResponses || allResponses.length === 0) return;
 
-  const failedIds = responses.map((r) => r.question_id);
-  const qMap = new Map<number, { text: string; statement: string | null }>();
+  const failing = allResponses.filter((r) => r.response === "no" || r.response === "partial");
+  const passingIds = allResponses.filter((r) => r.response === "yes").map((r) => r.question_id);
 
-  if (frameworkId === "pipeda") {
-    const { data: pq } = await admin
-      .from("pipeda_questions")
-      .select("id, business_question, compliance_statement")
-      .in("id", failedIds);
-    (pq ?? []).forEach((q) => qMap.set(q.id, { text: q.business_question, statement: q.compliance_statement ?? null }));
-  } else if (frameworkId === "hipaa") {
-    const { data: hq } = await admin
-      .from("hipaa_questions")
-      .select("id, questionaire, statement")
-      .in("id", failedIds);
-    (hq ?? []).forEach((q) => qMap.set(q.id, { text: q.questionaire, statement: q.statement ?? null }));
+  // One-time cleanup of pre-linkage rows (question_id was added later). Going
+  // forward every row is linked to its question, so this is a no-op after the
+  // first run.
+  await admin.from("remediation_roadmap").delete().eq("session_id", sessionId).is("question_id", null);
+
+  if (failing.length > 0) {
+    const failedIds = failing.map((r) => r.question_id);
+    const qMap = new Map<number, { text: string; statement: string | null }>();
+
+    if (frameworkId === "pipeda") {
+      const { data: pq } = await admin
+        .from("pipeda_questions")
+        .select("id, business_question, compliance_statement")
+        .in("id", failedIds);
+      (pq ?? []).forEach((q) => qMap.set(q.id, { text: q.business_question, statement: q.compliance_statement ?? null }));
+    } else if (frameworkId === "hipaa") {
+      const { data: hq } = await admin
+        .from("hipaa_questions")
+        .select("id, questionaire, statement")
+        .in("id", failedIds);
+      (hq ?? []).forEach((q) => qMap.set(q.id, { text: q.questionaire, statement: q.statement ?? null }));
+    }
+
+    const rows = failing.flatMap((r) => {
+      const q = qMap.get(r.question_id);
+      if (!q) return [];
+      return [{
+        session_id: sessionId,
+        user_id: userId,
+        question_id: r.question_id,
+        title: q.text,
+        description: q.statement,
+        category: "administrative",
+        priority: r.response === "no" ? "critical" : "high",
+        effort: "medium",
+      }];
+    });
+
+    if (rows.length > 0) {
+      // status is intentionally omitted: defaults to 'open' on insert, left
+      // untouched on conflict so in-progress/resolved work survives a rescan.
+      await admin.from("remediation_roadmap").upsert(rows, { onConflict: "session_id,question_id" });
+    }
   }
 
-  const rows = responses.flatMap((r) => {
-    const q = qMap.get(r.question_id);
-    if (!q) return [];
-    return [{
-      session_id: sessionId,
-      user_id: userId,
-      title: q.text,
-      description: q.statement,
-      category: "administrative",
-      priority: r.response === "no" ? "critical" : "high",
-      effort: "medium",
-      status: "open",
-    }];
-  });
-
-  if (rows.length > 0) {
-    await admin.from("remediation_roadmap").delete().eq("session_id", sessionId);
-    await admin.from("remediation_roadmap").insert(rows);
+  // A question that's since been answered "yes" (directly, or via task resolution)
+  // should no longer sit open in the roadmap.
+  if (passingIds.length > 0) {
+    await admin
+      .from("remediation_roadmap")
+      .update({ status: "resolved" })
+      .eq("session_id", sessionId)
+      .in("question_id", passingIds)
+      .neq("status", "resolved");
   }
 }

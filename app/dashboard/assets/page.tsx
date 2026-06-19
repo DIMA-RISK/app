@@ -93,6 +93,19 @@ export default async function AssetsPage() {
             {data.scannedAt ? ` · Last scan: ${new Date(data.scannedAt).toLocaleDateString("en-CA")}` : ""}
           </p>
         </div>
+        {data.orgIp && (
+          <div className={styles.pageActions}>
+            <form action={async () => {
+              "use server";
+              await queueScanJob();
+              redirect("/scanning");
+            }}>
+              <button type="submit" className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`}>
+                Re-scan Network
+              </button>
+            </form>
+          </div>
+        )}
       </div>
 
       {/* Score cards */}

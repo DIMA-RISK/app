@@ -960,3 +960,26 @@ CREATE POLICY "own alert_states" ON alert_states
   FOR ALL USING (user_id = auth.uid());
 
 CREATE INDEX IF NOT EXISTS idx_alert_states_user ON alert_states(user_id);
+
+-- =====================
+-- ADDENDUM 7: link remediation_roadmap tasks to their source questionnaire question
+-- Lets resolving an Action Plan task flip the underlying questionnaire answer to
+-- 'yes' (and reopening it revert that answer), so the risk score actually moves
+-- when remediation work is completed instead of staying frozen at assessment time.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+ALTER TABLE remediation_roadmap
+  ADD COLUMN IF NOT EXISTS question_id INT;
+
+-- NULLs don't conflict with each other under a UNIQUE constraint, so existing
+-- (unlinked) rows are unaffected — only new question-linked rows are deduped.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_roadmap_session_question'
+  ) THEN
+    ALTER TABLE remediation_roadmap
+      ADD CONSTRAINT uq_roadmap_session_question UNIQUE (session_id, question_id);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_roadmap_question ON remediation_roadmap(question_id);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Download } from "lucide-react";
 import type { ActionPlanData } from "../queries";
 import { updateTaskStatus } from "./taskActions";
@@ -20,6 +21,7 @@ const STATUS_CYCLE: Record<string, "open" | "in_progress" | "resolved"> = {
 const FILTERS = ["all", "open", "in_progress", "resolved", "high", "medium"];
 
 export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
   const [tasks, setTasks] = useState(data.tasks);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -47,6 +49,10 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
       if (result.error) {
         // Revert on failure
         setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, status: currentStatus } : t));
+      } else if (nextStatus === "resolved" || currentStatus === "resolved") {
+        // Resolving/reopening a task flips the underlying questionnaire answer
+        // and rescores — refresh so the risk score badge reflects it.
+        router.refresh();
       }
       setPendingId(null);
     });
