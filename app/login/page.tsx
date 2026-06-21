@@ -58,6 +58,11 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+            <p style={{ textAlign: "right", marginTop: "0.5rem" }}>
+              <a href="/forgot-password" className={styles.link} style={{ fontSize: "0.82rem" }}>
+                Forgot password?
+              </a>
+            </p>
           </div>
 
           {error && <p className={styles.error}>{error}</p>}
