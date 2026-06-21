@@ -79,7 +79,7 @@ export default function RegisterPage() {
     });
 
     // TEMP DEBUG — remove once we confirm what Supabase actually returns
-    console.log("signUp result", JSON.stringify({ signUpError, signUpData }, null, 2));
+    console.log("signUp result", JSON.stringify({ emailSent: email, signUpError, signUpData }, null, 2));
 
     if (signUpError) {
       setError(signUpError.message);
