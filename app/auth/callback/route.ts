@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { completeOrgRegistration } from "../../register/actions";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -23,8 +24,13 @@ export async function GET(request: Request) {
       },
     );
 
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      // Same-device magic-link path: finish org creation from user_metadata,
+      // matching what the OTP-code path does after verifyOtp().
+      if (data.user) {
+        await completeOrgRegistration(data.user.id);
+      }
       return NextResponse.redirect(`${origin}${next}`);
     }
   }

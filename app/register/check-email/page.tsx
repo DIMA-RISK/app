@@ -3,6 +3,7 @@
 import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "../../../utils/supabase/client";
+import { completeOrgRegistration } from "../actions";
 import styles from "../register.module.css";
 
 function CheckEmailContent() {
@@ -21,16 +22,28 @@ function CheckEmailContent() {
     setVerifying(true);
     setError(null);
     const supabase = createClient();
-    const { error: verifyError } = await supabase.auth.verifyOtp({
+    const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
       email,
       token: code.trim(),
       type: "signup",
     });
-    setVerifying(false);
     if (verifyError) {
+      setVerifying(false);
       setError(verifyError.message);
       return;
     }
+
+    if (verifyData.user) {
+      const { error: orgError } = await completeOrgRegistration(verifyData.user.id);
+      setVerifying(false);
+      if (orgError) {
+        setError(orgError);
+        return;
+      }
+    } else {
+      setVerifying(false);
+    }
+
     router.push("/welcome");
   }
 

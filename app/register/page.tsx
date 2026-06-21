@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { COUNTRY_LIST, type CountryOption } from "../../utils/countries";
 import { createClient } from "../../utils/supabase/client";
-import { registerOrganization } from "./actions";
+import { completeOrgRegistration } from "./actions";
 import styles from "./register.module.css";
 
 function codeToFlagEmoji(countryCode: string): string {
@@ -75,11 +75,23 @@ export default function RegisterPage() {
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome`,
+        // Stored as user_metadata on the auth user — read back after
+        // verification (code, magic link, or immediate session) to create the
+        // org row. Travels with the user across devices/tabs, unlike
+        // sessionStorage or query params.
+        data: {
+          org_name: data.get("organizationName") as string,
+          p_number: data.get("organizationPhone") as string,
+          industry: data.get("industry") as string,
+          address: data.get("address") as string,
+          org_country: selectedCountry.value,
+          dba_name: data.get("adminName") as string,
+          org_ip: data.get("orgIp") as string,
+        },
+      },
     });
-
-    // TEMP DEBUG — remove once we confirm what Supabase actually returns
-    console.log("signUp result", JSON.stringify({ emailSent: email, signUpError, signUpData }, null, 2));
 
     if (signUpError) {
       setError(signUpError.message);
@@ -87,40 +99,25 @@ export default function RegisterPage() {
       return;
     }
 
-    // Supabase returns a user with no identities (no error) when the email is
-    // already registered and confirmed — this prevents account enumeration,
-    // but we still need to surface something actionable to the user.
-    if (!signUpData.user || signUpData.user.identities?.length === 0) {
-      setError("An account with this email already exists. Try logging in, or use a different email.");
-      setLoading(false);
-      return;
-    }
-
-    const { error: err } = await registerOrganization({
-      userId: signUpData.user.id,
-      email,
-      org_name: data.get("organizationName") as string,
-      p_number: data.get("organizationPhone") as string,
-      industry: data.get("industry") as string,
-      address: data.get("address") as string,
-      org_country: selectedCountry.value,
-      dba_name: data.get("adminName") as string,
-      org_ip: data.get("orgIp") as string,
-    });
-
-    if (err) {
-      setError(err);
-      setLoading(false);
-      return;
-    }
-
-    // If email confirmation is required, signUp() won't return a session —
-    // send the user to check their inbox. Otherwise they're already signed in.
-    if (signUpData.session) {
+    if (signUpData.session && signUpData.user) {
+      // Confirm-email is disabled on this project — already logged in.
+      const { error: err } = await completeOrgRegistration(signUpData.user.id);
+      if (err) {
+        setError(err);
+        setLoading(false);
+        return;
+      }
       router.push("/welcome");
-    } else {
-      router.push(`/register/check-email?email=${encodeURIComponent(email)}`);
+      return;
     }
+
+    // signUpData.user is null both for a brand-new signup pending confirmation
+    // AND for an existing-but-unconfirmed account being resent its code (Supabase
+    // obfuscates both cases identically to prevent account enumeration). Either
+    // way a real code was just emailed, so we always continue to verification —
+    // org creation happens after a successful verifyOtp() or magic-link
+    // callback, reading the org details back from user_metadata set above.
+    router.push(`/register/check-email?email=${encodeURIComponent(email)}`);
   }
 
   return (
