@@ -78,6 +78,9 @@ export default function RegisterPage() {
       options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome` },
     });
 
+    // TEMP DEBUG — remove once we confirm what Supabase actually returns
+    console.log("signUp result", JSON.stringify({ signUpError, signUpData }, null, 2));
+
     if (signUpError) {
       setError(signUpError.message);
       setLoading(false);
