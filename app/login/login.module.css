@@ -73,7 +73,7 @@
   .loginButton:hover {
     background-color: #633fb0;
   }
-  .googleButton {
+  .ssoButton {
     width: 100%;
     padding: 0.8rem;
     background-color: transparent;
@@ -90,7 +90,7 @@
     transition: background 0.3s;
   }
   
-  .googleButton:hover {
+  .ssoButton:hover {
     background-color: rgba(221, 215, 234, 0.05);
   }
 

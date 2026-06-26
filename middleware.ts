@@ -4,7 +4,17 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password"];
 
+// Server-to-server webhooks (e.g. pg_net calling /api/beta-invite) carry no
+// session cookie and authenticate via their own shared secret instead — let
+// them through before any cookie-based auth/redirect logic runs.
+const WEBHOOK_ROUTES = ["/api/beta-invite"];
+
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (WEBHOOK_ROUTES.some((r) => pathname.startsWith(r))) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -29,7 +39,6 @@ export async function middleware(request: NextRequest) {
   );
 
   const { data: { user } } = await supabase.auth.getUser();
-  const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
 
   // Not logged in → login

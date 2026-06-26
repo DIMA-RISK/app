@@ -54,3 +54,33 @@ export async function completeOrgRegistration(userId: string): Promise<{ error?:
 
   return {};
 }
+
+// Atomically claims a beta invite code (single UPDATE...WHERE used_at IS NULL,
+// so two people racing on the same code can't both get through). Called right
+// before signUp() — invalid/used/mismatched codes never reach Supabase Auth.
+export async function redeemBetaCode(code: string, email: string): Promise<{ error?: string }> {
+  const trimmedCode = code.trim().toUpperCase();
+  const trimmedEmail = email.trim().toLowerCase();
+  if (!trimmedCode) return { error: "Please enter your invite code." };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("beta_codes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("code", trimmedCode)
+    .eq("email", trimmedEmail)
+    .is("used_at", null)
+    .select("code")
+    .maybeSingle();
+
+  if (error) return { error: error.message };
+  if (!data) return { error: "Invalid invite code, or it doesn't match this email." };
+  return {};
+}
+
+// Best-effort release if signUp() fails for an unrelated reason after the
+// code was already claimed, so the person doesn't lose their one shot.
+export async function releaseBetaCode(code: string): Promise<void> {
+  const admin = createAdminClient();
+  await admin.from("beta_codes").update({ used_at: null }).eq("code", code.trim().toUpperCase());
+}

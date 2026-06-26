@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { COUNTRY_LIST, type CountryOption } from "../../utils/countries";
 import { createClient } from "../../utils/supabase/client";
-import { completeOrgRegistration } from "./actions";
+import { completeOrgRegistration, redeemBetaCode, releaseBetaCode } from "./actions";
 import styles from "./register.module.css";
 
 function codeToFlagEmoji(countryCode: string): string {
@@ -13,14 +13,16 @@ function codeToFlagEmoji(countryCode: string): string {
     .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
 }
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [countrySearch, setCountrySearch] = useState("");
   const [selectedCountry, setSelectedCountry] = useState<CountryOption | null>(null);
   const [isCountryOpen, setIsCountryOpen] = useState(false);
   const countryFieldRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [inviteCode, setInviteCode] = useState(searchParams.get("code") ?? "");
 
   const filteredCountries = useMemo(() => {
     const query = countrySearch.trim().toLowerCase();
@@ -70,6 +72,14 @@ export default function RegisterPage() {
     setLoading(true);
 
     const email = data.get("organizationEmail") as string;
+
+    const { error: codeError } = await redeemBetaCode(inviteCode, email);
+    if (codeError) {
+      setError(codeError);
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
 
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
@@ -94,6 +104,7 @@ export default function RegisterPage() {
     });
 
     if (signUpError) {
+      await releaseBetaCode(inviteCode);
       setError(signUpError.message);
       setLoading(false);
       return;
@@ -130,6 +141,21 @@ export default function RegisterPage() {
         </header>
 
         <form className={styles.form} onSubmit={handleSubmit}>
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Beta Access</h2>
+            <div className={styles.orgGrid}>
+              <div className={`${styles.field} ${styles.fullWidth}`}>
+                <label className={styles.label} htmlFor="inviteCode">Invite Code</label>
+                <input id="inviteCode" name="inviteCode" type="text"
+                  className={styles.input} placeholder="e.g. A1B2C3D4"
+                  value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required />
+                <p className={styles.fieldHint}>
+                  DIMA Risk is currently invite-only. Enter the code from your invite email.
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className={styles.section}>
             <h2 className={styles.sectionTitle}>Organization Info</h2>
             <div className={styles.orgGrid}>
@@ -252,5 +278,13 @@ export default function RegisterPage() {
         </form>
       </section>
     </main>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   );
 }

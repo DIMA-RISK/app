@@ -983,3 +983,49 @@ DO $$ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_roadmap_question ON remediation_roadmap(question_id);
+
+-- =====================
+-- ADDENDUM 8: beta_codes + invite_beta_user() — invite-only registration gate
+-- Run `SELECT invite_beta_user('person@company.com');` in the SQL editor to
+-- invite someone: generates a single-use code tied to their email, stores it,
+-- and fires a webhook (via pg_net) to /api/beta-invite which emails them a
+-- "Register Here" link with the code pre-filled.
+--
+-- Requires the pg_net extension: Database -> Extensions -> enable "pg_net".
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE TABLE IF NOT EXISTS beta_codes (
+  code       TEXT PRIMARY KEY,
+  email      TEXT NOT NULL,
+  used_at    TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE beta_codes ENABLE ROW LEVEL SECURITY;
+-- No public policies — only the service-role (admin client) and this function
+-- ever touch this table.
+
+CREATE OR REPLACE FUNCTION invite_beta_user(p_email TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_code TEXT;
+BEGIN
+  v_code := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 8));
+
+  INSERT INTO beta_codes (code, email) VALUES (v_code, lower(trim(p_email)));
+
+  PERFORM net.http_post(
+    url     := 'https://app.dimarisk.com/api/beta-invite',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-beta-invite-secret', 'c79a09894c7891963a1cd9aa87aa1751d5f0f43409ede85c'
+    ),
+    body    := jsonb_build_object('email', lower(trim(p_email)), 'code', v_code)
+  );
+
+  RETURN v_code;
+END;
+$$;
