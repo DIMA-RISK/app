@@ -21,6 +21,9 @@ interface OrgProfile {
   vendor_count: number;
   max_vendor_access_level: number;
   vendor_data_share_pct: number;
+  business_size: string;
+  annual_revenue: number;
+  employee_count: number;
 }
 
 export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: OrgProfile) {
@@ -54,6 +57,9 @@ export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: 
       vendor_count: orgProfile.vendor_count,
       max_vendor_access_level: orgProfile.max_vendor_access_level,
       vendor_data_share_pct: orgProfile.vendor_data_share_pct,
+      business_size: orgProfile.business_size,
+      annual_revenue: orgProfile.annual_revenue,
+      employee_count: orgProfile.employee_count,
     })
     .eq("user_id", user.id);
 

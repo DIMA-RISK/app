@@ -27,6 +27,9 @@ interface OrgProfile {
   vendor_count: number;
   max_vendor_access_level: number;
   vendor_data_share_pct: number;
+  business_size: string;
+  annual_revenue: number;
+  employee_count: number;
 }
 
 const SENSITIVITY_LABELS: Record<number, string> = {
@@ -62,6 +65,9 @@ export default function OnboardingPage() {
     vendor_count: 0,
     max_vendor_access_level: 1,
     vendor_data_share_pct: 0,
+    business_size: "small",
+    annual_revenue: 0,
+    employee_count: 0,
   });
 
   useEffect(() => {
@@ -409,6 +415,44 @@ function OrgProfileForm({
           />
           <div className={styles.sliderLabels}>
             <span>Read-Only</span><span>Limited</span><span>Full</span><span>Admin</span>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.orgFormSection}>
+        <h3 className={styles.orgFormTitle}>Business Profile</h3>
+        <p className={styles.orgFormHint}>Used to calculate your security investment ROI.</p>
+        <div className={styles.orgFormGrid}>
+          <div className={styles.orgField}>
+            <label className={styles.orgLabel}>Business size</label>
+            <select
+              className={styles.orgInput}
+              value={profile.business_size}
+              onChange={(e) => onChange("business_size", e.target.value)}
+            >
+              <option value="micro">Micro (1-9 employees)</option>
+              <option value="small">Small (10-49 employees)</option>
+              <option value="medium">Medium (50-249 employees)</option>
+              <option value="large">Large (250-999 employees)</option>
+              <option value="enterprise">Enterprise (1000+ employees)</option>
+            </select>
+          </div>
+          <div className={styles.orgField}>
+            <label className={styles.orgLabel}>Number of employees</label>
+            <input
+              type="number" min={0} className={styles.orgInput}
+              value={profile.employee_count}
+              onChange={(e) => onChange("employee_count", parseInt(e.target.value) || 0)}
+            />
+          </div>
+          <div className={styles.orgField}>
+            <label className={styles.orgLabel}>Annual revenue (USD)</label>
+            <input
+              type="number" min={0} step={1000} className={styles.orgInput}
+              placeholder="e.g. 5000000"
+              value={profile.annual_revenue}
+              onChange={(e) => onChange("annual_revenue", parseFloat(e.target.value) || 0)}
+            />
           </div>
         </div>
       </div>

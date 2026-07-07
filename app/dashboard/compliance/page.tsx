@@ -1,5 +1,6 @@
 import { getComplianceData } from "../queries";
 import ComplianceExportButton from "./ComplianceExportButton";
+import CriticalControlsClient from "./CriticalControlsClient";
 import styles from "../dashboard.module.css";
 
 const BAND_COLOR: Record<string, string> = {
@@ -131,6 +132,16 @@ export default async function CompliancePage() {
           </div>
         </div>
       </div>
+
+      {/* Critical Controls — feeds the 4-framework gap formula */}
+      {data.criticalControls.length > 0 && (
+        <div style={{ marginTop: "1.5rem" }}>
+          <CriticalControlsClient
+            controls={data.criticalControls}
+            canEdit={data.role === "admin"}
+          />
+        </div>
+      )}
     </>
   );
 }

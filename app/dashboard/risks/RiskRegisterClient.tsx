@@ -1,33 +1,49 @@
 "use client";
 
-import { useState } from "react";
-import { Download } from "lucide-react";
-import type { RiskRegisterData } from "../queries";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Plus, X, Download, Trash2, Edit2 } from "lucide-react";
+import type { RiskRegisterData, RiskRegisterEntry } from "../queries";
+import {
+  createRiskEntry, updateRiskEntry, deleteRiskEntry,
+  type RiskEntryInput, type RiskCategory, type ProbabilityBand, type TreatmentStatus,
+} from "./actions";
 import styles from "../dashboard.module.css";
 
-const PRIORITY_CLASS: Record<string, string> = {
-  critical: styles.badgeCritical, high: styles.badgeHigh, medium: styles.badgeMedium, low: styles.badgeLow,
+const CATEGORY_LABELS: Record<string, string> = {
+  operational: "Operational", financial: "Financial", strategic: "Strategic",
+  compliance: "Compliance", technology: "Technology", reputational: "Reputational",
 };
-const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const PROBABILITY_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
+const PROBABILITY_COLOR: Record<string, string> = { low: "#22c55e", medium: "#f59e0b", high: "#f97316", critical: "#ef4444" };
+const PROBABILITY_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
+const STATUS_LABELS: Record<string, string> = { untreated: "Untreated", in_progress: "In Progress", done: "Done" };
+const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "COSO", "PIPEDA", "HIPAA", "GDPR"];
 
-const LIKELIHOOD: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
-const IMPACT: Record<string, string> = { high: "High", medium: "Medium", low: "Low" };
+function fmtCurrency(n: number) {
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n);
+}
 
-function exportCsv(risks: RiskRegisterData["risks"]) {
-  const headers = ["Risk", "Description", "Category", "Likelihood", "Impact", "Priority", "Status", "Effort"];
-  const rows = risks.map((r) => [
-    r.title,
-    r.description ?? "",
-    r.category,
-    LIKELIHOOD[r.priority] ?? "Medium",
-    IMPACT[r.priority] ?? "Medium",
-    r.priority,
-    r.status,
-    r.effort,
+function computeRoiOfTreatment(rows: RiskRegisterEntry[]): number | null {
+  const treated = rows.filter((e) => e.roiPct != null && e.treatmentCost);
+  if (treated.length === 0) return null;
+  const totalCost = treated.reduce((sum, e) => sum + (e.treatmentCost ?? 0), 0);
+  const totalAvoided = treated.reduce((sum, e) => {
+    const midBefore = PROBABILITY_MIDPOINT[e.probabilityBand] ?? 0;
+    const midAfter = PROBABILITY_MIDPOINT[e.probabilityAfterBand ?? "low"] ?? 0;
+    return sum + e.financialImpact * (midBefore - midAfter);
+  }, 0);
+  return totalCost > 0 ? ((totalAvoided - totalCost) / totalCost) * 100 : null;
+}
+
+function exportCsv(entries: RiskRegisterEntry[]) {
+  const headers = ["Risk", "Category", "Division", "Owner", "Framework Tags", "Probability", "Financial Impact", "Annualized Exposure", "Outside Appetite", "Treatment Status"];
+  const rows = entries.map((e) => [
+    e.title, CATEGORY_LABELS[e.category] ?? e.category, e.division ?? "", e.owner ?? "", e.frameworkTags.join("; "),
+    PROBABILITY_LABELS[e.probabilityBand] ?? e.probabilityBand, String(e.financialImpact), String(Math.round(e.exposure)),
+    e.outsideAppetite ? "Yes" : "No", STATUS_LABELS[e.treatmentStatus] ?? e.treatmentStatus,
   ]);
-  const csv = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
+  const csv = [headers, ...rows].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -37,58 +53,299 @@ function exportCsv(risks: RiskRegisterData["risks"]) {
   URL.revokeObjectURL(url);
 }
 
+function EntryModal({
+  entry, onClose, onSaved,
+}: {
+  entry: RiskRegisterEntry | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(entry?.title ?? "");
+  const [category, setCategory] = useState<RiskCategory>((entry?.category as RiskCategory) ?? "operational");
+  const [probabilityBand, setProbabilityBand] = useState<ProbabilityBand>(entry?.probabilityBand ?? "medium");
+  const [impactDirect, setImpactDirect] = useState(entry?.impactDirect ?? 0);
+  const [impactRegulatory, setImpactRegulatory] = useState(entry?.impactRegulatory ?? 0);
+  const [impactRecovery, setImpactRecovery] = useState(entry?.impactRecovery ?? 0);
+  const [frameworkTags, setFrameworkTags] = useState<string[]>(entry?.frameworkTags ?? []);
+  const [division, setDivision] = useState(entry?.division ?? "");
+  const [owner, setOwner] = useState(entry?.owner ?? "");
+  const [treatmentStatus, setTreatmentStatus] = useState<TreatmentStatus>(entry?.treatmentStatus ?? "untreated");
+  const [probabilityAfterBand, setProbabilityAfterBand] = useState<ProbabilityBand | "">(entry?.probabilityAfterBand ?? "");
+  const [treatmentCost, setTreatmentCost] = useState(entry?.treatmentCost ?? 0);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function toggleFramework(tag: string) {
+    setFrameworkTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const input: RiskEntryInput = {
+      title,
+      category,
+      probability_band: probabilityBand,
+      impact_direct: Number(impactDirect) || 0,
+      impact_regulatory: Number(impactRegulatory) || 0,
+      impact_recovery: Number(impactRecovery) || 0,
+      framework_tags: frameworkTags,
+      division: division.trim() || null,
+      owner: owner.trim() || null,
+      treatment_status: treatmentStatus,
+      probability_after_band: treatmentStatus !== "untreated" && probabilityAfterBand ? probabilityAfterBand : null,
+      treatment_cost: treatmentStatus !== "untreated" && treatmentCost ? Number(treatmentCost) : null,
+    };
+    startTransition(async () => {
+      const res = entry ? await updateRiskEntry(entry.id, input) : await createRiskEntry(input);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      onSaved();
+      onClose();
+    });
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(10,8,20,0.75)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", overflowY: "auto",
+      }}
+      onClick={onClose}
+    >
+      <div
+        className={styles.card}
+        style={{ width: "100%", maxWidth: 560, margin: "1rem", maxHeight: "90vh", overflowY: "auto" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter} ${styles.mb1}`}>
+          <h2 className={styles.cardTitleLg}>{entry ? "Edit Risk" : "Add Risk"}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(221,215,234,0.5)", cursor: "pointer" }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>Risk description</label>
+            <input
+              className={styles.fieldInput}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+              placeholder="e.g. Unencrypted backups stored offsite"
+            />
+          </div>
+
+          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Category</label>
+              <select className={styles.fieldSelect} value={category} onChange={(e) => setCategory(e.target.value as RiskCategory)}>
+                {Object.entries(CATEGORY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Probability</label>
+              <select className={styles.fieldSelect} value={probabilityBand} onChange={(e) => setProbabilityBand(e.target.value as ProbabilityBand)}>
+                {Object.entries(PROBABILITY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <p className={styles.fieldLabel} style={{ marginBottom: "0.4rem" }}>Financial impact (CAD)</p>
+          <div className={styles.grid3} style={{ marginBottom: "0.85rem", gap: "0.6rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Direct</label>
+              <input type="number" min={0} className={styles.fieldInput} value={impactDirect} onChange={(e) => setImpactDirect(Number(e.target.value))} />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Regulatory</label>
+              <input type="number" min={0} className={styles.fieldInput} value={impactRegulatory} onChange={(e) => setImpactRegulatory(Number(e.target.value))} />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Recovery</label>
+              <input type="number" min={0} className={styles.fieldInput} value={impactRecovery} onChange={(e) => setImpactRecovery(Number(e.target.value))} />
+            </div>
+          </div>
+
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>Framework tags</label>
+            <div className={styles.flex} style={{ gap: "0.4rem", flexWrap: "wrap" }}>
+              {FRAMEWORK_OPTIONS.map((tag) => (
+                <button
+                  type="button"
+                  key={tag}
+                  onClick={() => toggleFramework(tag)}
+                  className={`${styles.badge} ${frameworkTags.includes(tag) ? styles.badgePurple : styles.badgeGray}`}
+                  style={{ cursor: "pointer", border: "none" }}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Division</label>
+              <input className={styles.fieldInput} value={division} onChange={(e) => setDivision(e.target.value)} placeholder="e.g. IT Operations" />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Owner</label>
+              <input className={styles.fieldInput} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="e.g. Jane Doe, CISO" />
+            </div>
+          </div>
+
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>Treatment status</label>
+            <select className={styles.fieldSelect} value={treatmentStatus} onChange={(e) => setTreatmentStatus(e.target.value as TreatmentStatus)}>
+              {Object.entries(STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+
+          {treatmentStatus !== "untreated" && (
+            <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+              <div className={styles.field}>
+                <label className={styles.fieldLabel}>Probability after treatment</label>
+                <select className={styles.fieldSelect} value={probabilityAfterBand} onChange={(e) => setProbabilityAfterBand(e.target.value as ProbabilityBand)}>
+                  <option value="">—</option>
+                  {Object.entries(PROBABILITY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.fieldLabel}>Cost of treatment (CAD)</label>
+                <input type="number" min={0} className={styles.fieldInput} value={treatmentCost} onChange={(e) => setTreatmentCost(Number(e.target.value))} />
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ padding: "0.6rem 0.9rem", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, fontSize: "0.8rem", color: "#f87171", marginBottom: "1rem" }}>
+              {error}
+            </div>
+          )}
+
+          <div className={`${styles.flex} ${styles.gap08}`} style={{ justifyContent: "flex-end" }}>
+            <button type="button" className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={onClose}>Cancel</button>
+            <button type="submit" className={`${styles.btn} ${styles.btnPrimary} ${styles.btnSm}`} disabled={pending}>
+              {pending ? "Saving…" : entry ? "Save Changes" : "Add Risk"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function RiskRegisterClient({ data }: { data: RiskRegisterData }) {
-  const [filter, setFilter] = useState("all");
+  const router = useRouter();
+  const [entries, setEntries] = useState(data.entries);
+  const [divisionFilter, setDivisionFilter] = useState("all");
+  const [frameworkFilter, setFrameworkFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modalEntry, setModalEntry] = useState<RiskRegisterEntry | null | "new">(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const filtered = filter === "all" ? data.risks : data.risks.filter((r) => r.priority === filter || r.status === filter);
-  const sorted = [...filtered].sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9));
+  const canEdit = data.role === "admin";
 
-  const bandColor = data.riskBand === "critical" ? "#ef4444" : data.riskBand === "high" ? "#f97316" : data.riskBand === "medium" ? "#f59e0b" : "#22c55e";
+  const divisions = Array.from(new Set(entries.map((e) => e.division).filter(Boolean))) as string[];
+  const frameworks = Array.from(new Set(entries.flatMap((e) => e.frameworkTags)));
 
-  const counts = {
-    critical: data.risks.filter((r) => r.priority === "critical").length,
-    high: data.risks.filter((r) => r.priority === "high").length,
-    medium: data.risks.filter((r) => r.priority === "medium").length,
-  };
+  const filtered = entries.filter((e) => {
+    if (divisionFilter !== "all" && e.division !== divisionFilter) return false;
+    if (frameworkFilter !== "all" && !e.frameworkTags.includes(frameworkFilter)) return false;
+    if (statusFilter !== "all" && e.treatmentStatus !== statusFilter) return false;
+    return true;
+  });
+
+  const totalExposure = filtered.reduce((sum, e) => sum + e.exposure, 0);
+  const outsideAppetiteCount = filtered.filter((e) => e.outsideAppetite).length;
+  const openEntries = filtered.filter((e) => e.treatmentStatus !== "done").length;
+  const roiOfTreatment = computeRoiOfTreatment(filtered);
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    const res = await deleteRiskEntry(id);
+    if (!res.error) {
+      setEntries((prev) => prev.filter((e) => e.id !== id));
+    }
+    setDeletingId(null);
+  }
+
+  function refresh() {
+    router.refresh();
+  }
 
   return (
     <>
+      {modalEntry !== null && (
+        <EntryModal
+          entry={modalEntry === "new" ? null : modalEntry}
+          onClose={() => setModalEntry(null)}
+          onSaved={refresh}
+        />
+      )}
+
       <div className={styles.pageHeader}>
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>Risk Register</h1>
-          <p className={styles.pageSubtitle}>{data.risks.length} risks identified from compliance assessment</p>
+          <p className={styles.pageSubtitle}>{entries.length} risk{entries.length !== 1 ? "s" : ""} tracked across your organization</p>
         </div>
         <div className={styles.pageActions}>
-          <span className={`${styles.badge} ${styles.badgePurple}`} style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }}>
-            Risk Score: <strong style={{ color: bandColor }}>{data.riskScore}</strong>
-          </span>
-          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => exportCsv(sorted)}><Download size={14} /> Export</button>
+          <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => exportCsv(filtered)}>
+            <Download size={14} /> Export
+          </button>
+          {canEdit && (
+            <button className={`${styles.btn} ${styles.btnPrimary} ${styles.btnSm}`} onClick={() => setModalEntry("new")}>
+              <Plus size={14} /> Add Risk
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* Stat cards */}
       <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
-        {[
-          { label: "Total Risks", value: data.risks.length, sub: "identified", color: "#c4a8f0", icon: styles.iconPurple },
-          { label: "Critical / High", value: counts.critical + counts.high, sub: "require immediate action", color: "#ef4444", icon: styles.iconRed },
-          { label: "Medium", value: counts.medium, sub: "monitor closely", color: "#f59e0b", icon: styles.iconAmber },
-          { label: "Open", value: data.risks.filter((r) => r.status === "open").length, sub: "unresolved", color: "#60a5fa", icon: styles.iconBlue },
-        ].map(({ label, value, sub, color, icon }) => (
-          <div key={label} className={styles.statCard}>
-            <div className={styles.statCardTop}><span className={styles.statCardLabel}>{label}</span><div className={`${styles.statCardIcon} ${icon}`} /></div>
-            <div className={styles.statCardValue} style={{ color, fontSize: "1.75rem" }}>{value}</div>
-            <div className={styles.statCardSub}>{sub}</div>
+        <div className={styles.statCard}>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Total Exposure</span><div className={`${styles.statCardIcon} ${styles.iconPurple}`} /></div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{fmtCurrency(totalExposure)}</div>
+          <div className={styles.statCardSub}>sum of impact × probability</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Outside Appetite</span><div className={`${styles.statCardIcon} ${styles.iconRed}`} /></div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: outsideAppetiteCount > 0 ? "#ef4444" : "#22c55e" }}>{outsideAppetiteCount}</div>
+          <div className={styles.statCardSub}>exceeds $250K tolerance</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>Open Entries</span><div className={`${styles.statCardIcon} ${styles.iconBlue}`} /></div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{openEntries}</div>
+          <div className={styles.statCardSub}>not yet fully treated</div>
+        </div>
+        <div className={styles.statCard}>
+          <div className={styles.statCardTop}><span className={styles.statCardLabel}>ROI of Treatment</span><div className={`${styles.statCardIcon} ${styles.iconGreen}`} /></div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: (roiOfTreatment ?? 0) >= 0 ? "#22c55e" : "#ef4444" }}>
+            {roiOfTreatment != null ? `${Math.round(roiOfTreatment)}%` : "—"}
           </div>
-        ))}
+          <div className={styles.statCardSub}>exposure avoided vs. cost</div>
+        </div>
       </div>
 
-      {/* Filter */}
-      <div className={styles.tabs}>
-        {["all", "high", "medium", "open", "in-progress", "resolved"].map((f) => (
-          <button key={f} className={`${styles.tab} ${filter === f ? styles.tabActive : ""}`} onClick={() => setFilter(f)}>
-            {f === "all" ? "All Risks" : f.charAt(0).toUpperCase() + f.slice(1).replace("-", " ")}
-          </button>
-        ))}
+      {/* Filters */}
+      <div className={styles.flex} style={{ gap: "0.75rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
+        <select className={styles.fieldSelect} style={{ maxWidth: 200 }} value={divisionFilter} onChange={(e) => setDivisionFilter(e.target.value)}>
+          <option value="all">All divisions</option>
+          {divisions.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <select className={styles.fieldSelect} style={{ maxWidth: 200 }} value={frameworkFilter} onChange={(e) => setFrameworkFilter(e.target.value)}>
+          <option value="all">All frameworks</option>
+          {frameworks.map((f) => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select className={styles.fieldSelect} style={{ maxWidth: 200 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">All statuses</option>
+          {Object.entries(STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
       </div>
 
       {/* Table */}
@@ -98,29 +355,56 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
             <thead>
               <tr>
                 <th>Risk</th>
-                <th>Category</th>
-                <th>Likelihood</th>
-                <th>Impact</th>
-                <th>Priority</th>
-                <th>Status</th>
-                <th>Effort</th>
+                <th>Division</th>
+                <th>Framework</th>
+                <th>Probability</th>
+                <th>Financial Impact</th>
+                <th>Annualized Exposure</th>
+                <th>Appetite</th>
+                {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {sorted.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>No risks match this filter.</td></tr>
-              ) : sorted.map((risk) => (
-                <tr key={risk.id}>
-                  <td>
-                    <div style={{ fontWeight: 500, color: "#ddd7ea", marginBottom: "0.2rem" }}>{risk.title}</div>
-                    {risk.description && <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)", lineHeight: 1.4 }}>{risk.description.slice(0, 90)}{risk.description.length > 90 ? "…" : ""}</div>}
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={canEdit ? 8 : 7} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>
+                    No risks match this filter.{canEdit ? " Click \"Add Risk\" to create one." : ""}
                   </td>
-                  <td><span className={`${styles.badge} ${styles.badgePurple}`}>{risk.category}</span></td>
-                  <td><span style={{ color: risk.priority === "high" ? "#f87171" : "#fbbf24", fontWeight: 600, fontSize: "0.8rem" }}>{LIKELIHOOD[risk.priority] ?? "Medium"}</span></td>
-                  <td><span style={{ color: risk.priority === "high" ? "#f87171" : "#fbbf24", fontWeight: 600, fontSize: "0.8rem" }}>{IMPACT[risk.priority] ?? "Medium"}</span></td>
-                  <td><span className={`${styles.badge} ${PRIORITY_CLASS[risk.priority] ?? styles.badgeMedium}`}>{risk.priority}</span></td>
-                  <td><span className={`${styles.badge} ${risk.status === "resolved" ? styles.badgeGreen : risk.status === "in-progress" ? styles.badgeMedium : styles.badgeGray}`}>{risk.status}</span></td>
-                  <td><span className={`${styles.badge} ${styles.badgeInfo}`}>{risk.effort}</span></td>
+                </tr>
+              ) : filtered.map((e) => (
+                <tr key={e.id}>
+                  <td>
+                    <div style={{ fontWeight: 500, color: "#ddd7ea" }}>{e.title}</div>
+                    <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>{CATEGORY_LABELS[e.category] ?? e.category}</div>
+                  </td>
+                  <td>{e.division ?? "—"}</td>
+                  <td>
+                    <div className={styles.flex} style={{ gap: "0.3rem", flexWrap: "wrap" }}>
+                      {e.frameworkTags.length === 0 ? "—" : e.frameworkTags.map((t) => (
+                        <span key={t} className={`${styles.badge} ${styles.badgePurple}`}>{t}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td><span style={{ color: PROBABILITY_COLOR[e.probabilityBand], fontWeight: 600 }}>{PROBABILITY_LABELS[e.probabilityBand]}</span></td>
+                  <td>{fmtCurrency(e.financialImpact)}</td>
+                  <td>{fmtCurrency(e.exposure)}</td>
+                  <td>
+                    <span className={`${styles.badge} ${e.outsideAppetite ? styles.badgeCritical : styles.badgeGreen}`}>
+                      {e.outsideAppetite ? "Outside" : "Within"}
+                    </span>
+                  </td>
+                  {canEdit && (
+                    <td>
+                      <div className={styles.flex} style={{ gap: "0.4rem" }}>
+                        <button onClick={() => setModalEntry(e)} style={{ background: "none", border: "none", color: "#9b7de2", cursor: "pointer" }}>
+                          <Edit2 size={14} />
+                        </button>
+                        <button onClick={() => handleDelete(e.id)} disabled={deletingId === e.id} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

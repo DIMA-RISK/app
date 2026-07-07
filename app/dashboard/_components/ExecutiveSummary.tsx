@@ -70,6 +70,32 @@ function fmtCurrency(n: number, currency: string) {
   }).format(n);
 }
 
+function roiRecommendation(pct: number): { label: string; color: string } {
+  if (pct >= 300) return { label: "Exceptional", color: "#22c55e" };
+  if (pct >= 200) return { label: "Excellent", color: "#4ade80" };
+  if (pct >= 100) return { label: "Good", color: "#84cc16" };
+  if (pct >= 50) return { label: "Moderate", color: "#f59e0b" };
+  if (pct >= 0) return { label: "Low", color: "#f97316" };
+  return { label: "Negative", color: "#ef4444" };
+}
+
+const INVESTMENT_LABELS: Record<string, string> = {
+  technology_infrastructure: "Technology & Infrastructure",
+  professional_services: "Professional Services",
+  security_training: "Security Training",
+  maintenance_operations: "Maintenance & Operations",
+};
+
+const BENEFIT_LABELS: Record<string, string> = {
+  breach_cost_avoidance: "Breach Cost Avoidance",
+  regulatory_fine_avoidance: "Regulatory Fine Avoidance",
+  business_continuity: "Business Continuity",
+  reputation_protection: "Reputation Protection",
+  operational_efficiency: "Operational Efficiency",
+  cyber_insurance_discount: "Cyber Insurance Discount",
+  compliance_cost_avoidance: "Compliance Cost Avoidance",
+};
+
 function fmtDate(iso: string) {
   try {
     return new Intl.DateTimeFormat("en-CA", {
@@ -161,6 +187,8 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
       : data.riskBand === "low"
       ? "Low Risk"
       : "Not Scored";
+
+  const roiRec = data.roi ? roiRecommendation(data.roi.roiPct) : null;
 
   const nextAction = data.tasks[0] ?? null;
   const nextActionBadgeClass =
@@ -403,6 +431,147 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
           </div>
         </div>
       </div>
+
+      {/* Return on Investment */}
+      {data.roi && roiRec ? (
+        <div className={`${styles.card} ${styles.mb15}`}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitleLg}>Return on Investment</h2>
+            <span className={styles.badge} style={{ background: `${roiRec.color}22`, color: roiRec.color, border: `1px solid ${roiRec.color}44` }}>
+              {roiRec.label}
+            </span>
+          </div>
+
+          <div className={styles.statGrid} style={{ marginBottom: "1rem" }}>
+            <div className={styles.statCard}>
+              <div className={styles.statCardTop}><span className={styles.statCardLabel}>3-Yr Net Benefit</span></div>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: data.roi.netBenefit3yr >= 0 ? "#22c55e" : "#ef4444" }}>
+                {fmtCurrency(data.roi.netBenefit3yr, data.currency)}
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statCardTop}><span className={styles.statCardLabel}>ROI</span></div>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: roiRec.color }}>
+                {Math.round(data.roi.roiPct)}%
+              </div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statCardTop}><span className={styles.statCardLabel}>Payback Period</span></div>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{data.roi.paybackMonths.toFixed(1)} mo</div>
+            </div>
+            <div className={styles.statCard}>
+              <div className={styles.statCardTop}><span className={styles.statCardLabel}>3-Yr Investment</span></div>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{fmtCurrency(data.roi.investmentTotal, data.currency)}</div>
+            </div>
+          </div>
+
+          <hr className={styles.divider} />
+          <div className={styles.grid2}>
+            <div>
+              <p className={styles.sectionLabel}>Investment Breakdown</p>
+              {Object.entries(data.roi.investmentBreakdown).map(([key, val]) => (
+                <div key={key} className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ padding: "0.35rem 0", borderBottom: "1px solid rgba(117,76,190,0.07)" }}>
+                  <span className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)" }}>{INVESTMENT_LABELS[key] ?? key}</span>
+                  <span className={styles.textSm} style={{ color: "#ddd7ea", fontWeight: 600 }}>{fmtCurrency(Number(val), data.currency)}</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <p className={styles.sectionLabel}>3-Year Benefits</p>
+              {Object.entries(data.roi.benefitsBreakdown).map(([key, val]) => (
+                <div key={key} className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ padding: "0.35rem 0", borderBottom: "1px solid rgba(117,76,190,0.07)" }}>
+                  <span className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)" }}>{BENEFIT_LABELS[key] ?? key}</span>
+                  <span className={styles.textSm} style={{ color: "#4ade80", fontWeight: 600 }}>{fmtCurrency(Number(val), data.currency)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : data.hasSession ? (
+        <div className={`${styles.card} ${styles.mb15}`} style={{ textAlign: "center", padding: "1.5rem" }}>
+          <p className={styles.emptyText}>
+            Add your business size, annual revenue, and employee count during onboarding to see your security investment ROI here.
+          </p>
+        </div>
+      ) : null}
+
+      {/* Risk Heatmap + Maturity Dashboard */}
+      {(data.heatmapEntries.length > 0 || data.maturityDomains.length > 0) && (
+        <div className={`${styles.grid2} ${styles.mb15}`}>
+          {/* Risk Heatmap */}
+          {data.heatmapEntries.length > 0 && (
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2 className={styles.cardTitleLg}>Risk Heatmap</h2>
+                <span className={`${styles.badge} ${styles.badgePurple}`}>{data.heatmapEntries.length} entries</span>
+              </div>
+              {/* 4×4 probability × impact grid */}
+              {(() => {
+                const BANDS = ["low","medium","high","critical"] as const;
+                const PROB_LABEL: Record<string,string> = { low:"Low", medium:"Med", high:"High", critical:"Crit" };
+                type Band = typeof BANDS[number];
+                const grid: Record<string, string[]> = {};
+                BANDS.forEach((p) => BANDS.forEach((i) => { grid[`${p}:${i}`] = []; }));
+                data.heatmapEntries.forEach((e) => {
+                  const iBand: Band = e.financialImpact >= 1000000 ? "critical" : e.financialImpact >= 250000 ? "high" : e.financialImpact >= 50000 ? "medium" : "low";
+                  const key = `${e.probabilityBand}:${iBand}`;
+                  if (grid[key]) grid[key].push(e.title);
+                });
+                const cellColor = (p: string, i: string): string => {
+                  const score = (BANDS.indexOf(p as Band)+1) * (BANDS.indexOf(i as Band)+1);
+                  return score >= 12 ? "rgba(239,68,68,0.25)" : score >= 6 ? "rgba(245,158,11,0.2)" : score >= 3 ? "rgba(249,115,22,0.1)" : "rgba(34,197,94,0.08)";
+                };
+                return (
+                  <div>
+                    <div style={{ display: "flex", gap: "0.2rem", marginBottom: "0.2rem", paddingLeft: "3rem" }}>
+                      {BANDS.map((i) => <div key={i} style={{ flex: 1, textAlign: "center", fontSize: "0.62rem", color: "rgba(221,215,234,0.4)" }}>{PROB_LABEL[i]}</div>)}
+                    </div>
+                    {[...BANDS].reverse().map((p) => (
+                      <div key={p} style={{ display: "flex", alignItems: "center", gap: "0.2rem", marginBottom: "0.2rem" }}>
+                        <div style={{ width: "2.8rem", fontSize: "0.62rem", color: "rgba(221,215,234,0.4)", flexShrink: 0 }}>{PROB_LABEL[p]} P</div>
+                        {BANDS.map((i) => {
+                          const entries = grid[`${p}:${i}`] ?? [];
+                          return (
+                            <div key={i} title={entries.join(", ")} style={{ flex: 1, height: 36, borderRadius: 4, background: cellColor(p, i), border: "1px solid rgba(117,76,190,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {entries.length > 0 && <span style={{ fontWeight: 700, fontSize: "0.75rem", color: "#ddd7ea" }}>{entries.length}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    <div style={{ fontSize: "0.6rem", color: "rgba(221,215,234,0.3)", marginTop: "0.5rem", textAlign: "right" }}>Impact →</div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Maturity Dashboard */}
+          {data.maturityDomains.length > 0 && (
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2 className={styles.cardTitleLg}>Maturity Dashboard</h2>
+              </div>
+              <div className={styles.flexCol} style={{ gap: "0.7rem" }}>
+                {data.maturityDomains.map((d) => {
+                  const color = d.rawScore >= 80 ? "#22c55e" : d.rawScore >= 60 ? "#f59e0b" : d.rawScore >= 40 ? "#f97316" : "#ef4444";
+                  return (
+                    <div key={d.domain}>
+                      <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ marginBottom: "0.3rem" }}>
+                        <span className={styles.textSm} style={{ color: "#ddd7ea" }}>{d.domain}</span>
+                        <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>L{d.maturityLevel} {d.label}</span>
+                      </div>
+                      <div className={styles.progressBar} style={{ height: 6 }}>
+                        <div style={{ height: "100%", width: `${d.rawScore}%`, background: color, borderRadius: 4, transition: "width 0.6s ease" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Bottom Row */}
       <div className={styles.grid21}>

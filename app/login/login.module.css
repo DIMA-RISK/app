@@ -73,26 +73,6 @@
   .loginButton:hover {
     background-color: #633fb0;
   }
-  .ssoButton {
-    width: 100%;
-    padding: 0.8rem;
-    background-color: transparent;
-    color: #ddd7ea;
-    border: 1px solid rgba(221, 215, 234, 0.2);
-    border-radius: 0.6rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 1rem;
-    cursor: pointer;
-    font-weight: 500;
-    transition: background 0.3s;
-  }
-  
-  .ssoButton:hover {
-    background-color: rgba(221, 215, 234, 0.05);
-  }
 
 .loginButton:disabled {
   opacity: 0.6;

@@ -29,16 +29,6 @@ export default function LoginPage() {
     router.push("/welcome");
   }
 
-  async function handleMicrosoftLogin() {
-    setError(null);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "azure",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) setError(error.message);
-  }
-
   return (
     <main className={styles.container}>
       <div className={styles.card}>
@@ -79,20 +69,6 @@ export default function LoginPage() {
 
           <button type="submit" className={styles.loginButton} disabled={loading}>
             {loading ? "Signing in…" : "Log In"}
-          </button>
-
-          <div style={{ textAlign: "center", margin: "1rem 0", color: "rgba(221, 215, 234, 0.5)", fontSize: "0.8rem" }}>
-            OR
-          </div>
-
-          <button type="button" className={styles.ssoButton} onClick={handleMicrosoftLogin}>
-            <svg width="20" height="20" viewBox="0 0 23 23">
-              <rect x="1" y="1" width="10" height="10" fill="#F25022"/>
-              <rect x="12" y="1" width="10" height="10" fill="#7FBA00"/>
-              <rect x="1" y="12" width="10" height="10" fill="#00A4EF"/>
-              <rect x="12" y="12" width="10" height="10" fill="#FFB900"/>
-            </svg>
-            Continue with Microsoft
           </button>
 
           <p className={styles.registerLink}>

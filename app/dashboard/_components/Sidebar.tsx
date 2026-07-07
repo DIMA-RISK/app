@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, ShieldCheck, ClipboardList, AlertTriangle,
   ListChecks, HardDrive, FolderOpen, TrendingUp, Bell,
-  FileText, Settings, Users, ChevronLeft, ChevronRight, LogOut,
+  FileText, Settings, Users, ChevronLeft, ChevronRight, LogOut, Globe, Award, BarChart3,
 } from "lucide-react";
 import { createClient } from "../../../utils/supabase/client";
 import styles from "../dashboard.module.css";
@@ -22,6 +22,8 @@ const NAV = [
     items: [
       { href: "/dashboard/compliance", icon: ShieldCheck, label: "Compliance Status" },
       { href: "/dashboard/questionnaire", icon: ClipboardList, label: "Questionnaire" },
+      { href: "/dashboard/gdpr", icon: Globe, label: "GDPR Assessment" },
+      { href: "/dashboard/iso27001", icon: Award, label: "ISO 27001" },
       { href: "/dashboard/risks", icon: AlertTriangle, label: "Risk Register" },
       { href: "/dashboard/actions", icon: ListChecks, label: "Action Plan" },
     ],
@@ -37,6 +39,7 @@ const NAV = [
     section: "Insights",
     items: [
       { href: "/dashboard/analytics", icon: TrendingUp, label: "Analytics" },
+      { href: "/dashboard/kpi", icon: BarChart3, label: "KPI Dashboard" },
       { href: "/dashboard/alerts", icon: Bell, label: "Alerts" },
       { href: "/dashboard/reports", icon: FileText, label: "Reports" },
     ],
