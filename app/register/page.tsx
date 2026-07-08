@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { COUNTRY_LIST, type CountryOption } from "../../utils/countries";
 import { createClient } from "../../utils/supabase/client";
-import { completeOrgRegistration, redeemBetaCode, releaseBetaCode } from "./actions";
+import { completeOrgRegistration, redeemBetaCode, releaseBetaCode, emailAlreadyConfirmed } from "./actions";
 import styles from "./register.module.css";
 
 function codeToFlagEmoji(countryCode: string): string {
@@ -122,12 +122,24 @@ function RegisterForm() {
       return;
     }
 
-    // signUpData.user is null both for a brand-new signup pending confirmation
-    // AND for an existing-but-unconfirmed account being resent its code (Supabase
-    // obfuscates both cases identically to prevent account enumeration). Either
-    // way a real code was just emailed, so we always continue to verification —
-    // org creation happens after a successful verifyOtp() or magic-link
-    // callback, reading the org details back from user_metadata set above.
+    // Brand-new signup pending confirmation: signUp returns a user with an
+    // identity. A real code was just emailed → continue to verification.
+    if (signUpData.user && (signUpData.user.identities?.length ?? 0) > 0) {
+      router.push(`/register/check-email?email=${encodeURIComponent(email)}`);
+      return;
+    }
+
+    // signUpData.user is null → an account with this email already exists
+    // (Supabase obfuscates existing accounts to prevent enumeration). If it's
+    // already confirmed, no code is sent — so tell them to log in instead of
+    // dead-ending on the check-email page. If it's unconfirmed, a fresh code
+    // was resent, so continue to verification.
+    if (await emailAlreadyConfirmed(email)) {
+      await releaseBetaCode(inviteCode);
+      setError("An account with this email already exists. Please log in instead.");
+      setLoading(false);
+      return;
+    }
     router.push(`/register/check-email?email=${encodeURIComponent(email)}`);
   }
 

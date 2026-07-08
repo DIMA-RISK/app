@@ -92,6 +92,23 @@ export async function redeemBetaCode(code: string, email: string): Promise<{ err
   return {};
 }
 
+// Whether an account with this email already exists AND is confirmed.
+// signUp() obfuscates existing accounts (returns user: null) to prevent
+// enumeration, so we can't tell from its response whether re-registration
+// hit a confirmed account (no code will be sent — nothing to confirm) or an
+// unconfirmed one (a fresh code is resent). This lets the register page show
+// "please log in" for confirmed accounts instead of dead-ending on the
+// check-email page waiting for a code that will never arrive.
+export async function emailAlreadyConfirmed(email: string): Promise<boolean> {
+  const target = email.trim().toLowerCase();
+  const admin = createAdminClient();
+  // Beta scale — a single large page is sufficient. Revisit with a targeted
+  // lookup if the user base grows past a few hundred.
+  const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const match = data.users.find((u) => u.email?.toLowerCase() === target);
+  return !!(match && match.email_confirmed_at);
+}
+
 // Best-effort release if signUp() fails for an unrelated reason after the
 // code was already claimed, so the person doesn't lose their one shot.
 export async function releaseBetaCode(code: string): Promise<void> {
