@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Download, Trash2, Edit2 } from "lucide-react";
 import type { RiskRegisterData, RiskRegisterEntry } from "../queries";
 import {
-  createRiskEntry, updateRiskEntry, deleteRiskEntry,
+  createRiskEntry, updateRiskEntry, deleteRiskEntry, saveRiskTolerance,
   type RiskEntryInput, type RiskCategory, type ProbabilityBand, type TreatmentStatus,
 } from "./actions";
 import styles from "../dashboard.module.css";
@@ -248,6 +248,8 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
   const [statusFilter, setStatusFilter] = useState("all");
   const [modalEntry, setModalEntry] = useState<RiskRegisterEntry | null | "new">(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [tolerance, setTolerance] = useState(data.toleranceThreshold);
+  const [editingTolerance, setEditingTolerance] = useState(false);
 
   const canEdit = data.role === "admin";
 
@@ -265,6 +267,18 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
   const outsideAppetiteCount = filtered.filter((e) => e.outsideAppetite).length;
   const openEntries = filtered.filter((e) => e.treatmentStatus !== "done").length;
   const roiOfTreatment = computeRoiOfTreatment(filtered);
+
+  // Departmental exposure = SUM(impact × probability) grouped by division (live aggregate)
+  const deptExposure = Array.from(
+    entries.reduce((map, e) => {
+      const key = e.division?.trim() || "Unassigned";
+      const d = map.get(key) ?? { division: key, exposure: 0, count: 0, outside: 0 };
+      d.exposure += e.exposure; d.count += 1; if (e.outsideAppetite) d.outside += 1;
+      map.set(key, d);
+      return map;
+    }, new Map<string, { division: string; exposure: number; count: number; outside: number }>()).values()
+  ).sort((a, b) => b.exposure - a.exposure);
+  const maxDeptExposure = Math.max(1, ...deptExposure.map((d) => d.exposure));
 
   async function handleDelete(id: string) {
     setDeletingId(id);
@@ -294,7 +308,31 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
           <h1 className={styles.pageTitle}>Risk Register</h1>
           <p className={styles.pageSubtitle}>{entries.length} risk{entries.length !== 1 ? "s" : ""} tracked across your organization</p>
         </div>
-        <div className={styles.pageActions}>
+        <div className={styles.pageActions} style={{ alignItems: "center", gap: "0.75rem" }}>
+          {/* Per-org risk appetite tolerance */}
+          <div className={`${styles.flex} ${styles.itemsCenter}`} style={{ gap: "0.4rem" }}>
+            <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.5)" }}>Appetite</span>
+            {editingTolerance && canEdit ? (
+              <input
+                type="number" min={0} step={10000} autoFocus
+                className={styles.fieldInput}
+                style={{ maxWidth: 120, padding: "0.3rem 0.5rem" }}
+                value={tolerance}
+                onChange={(e) => setTolerance(Number(e.target.value))}
+                onBlur={() => { setEditingTolerance(false); saveRiskTolerance(tolerance).then(() => router.refresh()); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { setEditingTolerance(false); saveRiskTolerance(tolerance).then(() => router.refresh()); } }}
+              />
+            ) : (
+              <button
+                onClick={() => canEdit && setEditingTolerance(true)}
+                className={`${styles.badge} ${styles.badgeGray}`}
+                style={{ cursor: canEdit ? "pointer" : "default", border: "none" }}
+                title={canEdit ? "Click to edit tolerance threshold" : undefined}
+              >
+                {fmtCurrency(tolerance)}
+              </button>
+            )}
+          </div>
           <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => exportCsv(filtered)}>
             <Download size={14} /> Export
           </button>
@@ -316,7 +354,7 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
         <div className={styles.statCard}>
           <div className={styles.statCardTop}><span className={styles.statCardLabel}>Outside Appetite</span><div className={`${styles.statCardIcon} ${styles.iconRed}`} /></div>
           <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: outsideAppetiteCount > 0 ? "#ef4444" : "#22c55e" }}>{outsideAppetiteCount}</div>
-          <div className={styles.statCardSub}>exceeds $250K tolerance</div>
+          <div className={styles.statCardSub}>exceeds {fmtCurrency(tolerance)} tolerance</div>
         </div>
         <div className={styles.statCard}>
           <div className={styles.statCardTop}><span className={styles.statCardLabel}>Open Entries</span><div className={`${styles.statCardIcon} ${styles.iconBlue}`} /></div>
@@ -331,6 +369,34 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
           <div className={styles.statCardSub}>exposure avoided vs. cost</div>
         </div>
       </div>
+
+      {/* Departmental exposure — live SUM(impact × probability) by division */}
+      {deptExposure.length > 0 && (
+        <div className={styles.card} style={{ marginBottom: "1.5rem" }}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitleLg}>Departmental Exposure</h2>
+            <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>annualized, by division</span>
+          </div>
+          <div className={styles.flexCol} style={{ gap: "0.6rem" }}>
+            {deptExposure.map((d) => (
+              <div key={d.division}>
+                <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ marginBottom: "0.3rem" }}>
+                  <span className={styles.textSm} style={{ color: "#ddd7ea" }}>
+                    {d.division}
+                    <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)", marginLeft: "0.5rem" }}>
+                      {d.count} risk{d.count !== 1 ? "s" : ""}{d.outside > 0 ? ` · ${d.outside} outside appetite` : ""}
+                    </span>
+                  </span>
+                  <span className={styles.textSm} style={{ fontWeight: 600, color: d.outside > 0 ? "#f87171" : "#ddd7ea" }}>{fmtCurrency(d.exposure)}</span>
+                </div>
+                <div className={styles.progressBar} style={{ height: 6 }}>
+                  <div style={{ height: "100%", width: `${(d.exposure / maxDeptExposure) * 100}%`, background: d.outside > 0 ? "#ef4444" : "#754cbe", borderRadius: 4 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className={styles.flex} style={{ gap: "0.75rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
@@ -356,18 +422,20 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
               <tr>
                 <th>Risk</th>
                 <th>Division</th>
+                <th>Owner</th>
                 <th>Framework</th>
                 <th>Probability</th>
                 <th>Financial Impact</th>
                 <th>Annualized Exposure</th>
                 <th>Appetite</th>
+                <th>Status</th>
                 {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={canEdit ? 8 : 7} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>
+                  <td colSpan={canEdit ? 10 : 9} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>
                     No risks match this filter.{canEdit ? " Click \"Add Risk\" to create one." : ""}
                   </td>
                 </tr>
@@ -378,6 +446,7 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
                     <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>{CATEGORY_LABELS[e.category] ?? e.category}</div>
                   </td>
                   <td>{e.division ?? "—"}</td>
+                  <td>{e.owner ?? "—"}</td>
                   <td>
                     <div className={styles.flex} style={{ gap: "0.3rem", flexWrap: "wrap" }}>
                       {e.frameworkTags.length === 0 ? "—" : e.frameworkTags.map((t) => (
@@ -391,6 +460,11 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
                   <td>
                     <span className={`${styles.badge} ${e.outsideAppetite ? styles.badgeCritical : styles.badgeGreen}`}>
                       {e.outsideAppetite ? "Outside" : "Within"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`${styles.badge} ${e.treatmentStatus === "done" ? styles.badgeGreen : e.treatmentStatus === "in_progress" ? styles.badgeMedium : styles.badgeGray}`}>
+                      {STATUS_LABELS[e.treatmentStatus] ?? e.treatmentStatus}
                     </span>
                   </td>
                   {canEdit && (

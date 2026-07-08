@@ -96,6 +96,7 @@ export interface DashboardData {
   roi: RoiData | null;
   heatmapEntries: { probabilityBand: string; financialImpact: number; exposure: number; title: string }[];
   maturityDomains: { domain: string; rawScore: number; maturityLevel: number; label: string }[];
+  dataSensitivityLevel: number;
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
@@ -125,6 +126,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     roi: null,
     heatmapEntries: [],
     maturityDomains: [],
+    dataSensitivityLevel: 3,
   };
 
   const ctx = await getOrgContext();
@@ -134,7 +136,7 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_name, org_uid, id")
+    .select("org_name, org_uid, id, data_sensitivity_level")
     .eq("user_id", userId)
     .single();
 
@@ -272,6 +274,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       maturityLevel: d.maturity_level,
       label: d.label,
     })),
+    dataSensitivityLevel: Number(org?.data_sensitivity_level ?? 3),
   };
 }
 
@@ -472,6 +475,7 @@ export interface GdprProcessEntry {
   childrenData: boolean;
   lawfulBasis: string | null;
   dataVolume: string | null;
+  transborder: string | null;
   gdprCompliant: string | null;
   notes: string | null;
 }
@@ -480,6 +484,7 @@ export interface GdprAssessmentData {
   sections: GdprSection[];
   overallCompliancePct: number;
   processRegister: GdprProcessEntry[];
+  targetDate: string | null;
   role: "admin" | "viewer";
 }
 
@@ -489,11 +494,12 @@ export async function getGdprAssessmentData(): Promise<GdprAssessmentData | null
   const { userId } = ctx;
   const admin = createAdminClient();
 
-  const [sectionsResult, questionsResult, responsesResult, processResult] = await Promise.all([
+  const [sectionsResult, questionsResult, responsesResult, processResult, orgResult] = await Promise.all([
     admin.from("gdpr_sections").select("id, name").order("id"),
     admin.from("gdpr_questions").select("id, section_id, question, mandatory, sort_order").order("section_id").order("sort_order"),
     admin.from("gdpr_responses").select("question_id, response, documented, comments").eq("user_id", userId),
-    admin.from("gdpr_process_register").select("id, process_name, controller_status, personal_data, special_category, children_data, lawful_basis, data_volume, gdpr_compliant, notes").eq("user_id", userId).order("created_at"),
+    admin.from("gdpr_process_register").select("id, process_name, controller_status, personal_data, special_category, children_data, lawful_basis, data_volume, transborder, gdpr_compliant, notes").eq("user_id", userId).order("created_at"),
+    admin.from("organizations").select("gdpr_target_date").eq("user_id", userId).maybeSingle(),
   ]);
 
   const responseMap = new Map((responsesResult.data ?? []).map((r) => [r.question_id, r]));
@@ -537,11 +543,12 @@ export async function getGdprAssessmentData(): Promise<GdprAssessmentData | null
     childrenData: p.children_data ?? false,
     lawfulBasis: p.lawful_basis,
     dataVolume: p.data_volume,
+    transborder: p.transborder,
     gdprCompliant: p.gdpr_compliant,
     notes: p.notes,
   }));
 
-  return { sections, overallCompliancePct, processRegister, role: ctx.role };
+  return { sections, overallCompliancePct, processRegister, targetDate: orgResult.data?.gdpr_target_date ?? null, role: ctx.role };
 }
 
 // ─── ISO 27001 Tracker ────────────────────────────────────────────────────────
@@ -635,6 +642,9 @@ export interface KpiData {
   avgMaturityLevel: number | null;           // avg of maturity_scores.maturity_level
   mttdCriticalHours: number | null;          // mean time to detect, critical severity
   mttdHighHours: number | null;              // mean time to detect, high severity
+  // Framework tags present across the org's risk register — drives which KPI
+  // families surface (EWNAF spec 2.2). Empty = show all as fallback.
+  activeFrameworks: string[];
   role: "admin" | "viewer";
 }
 
@@ -650,13 +660,14 @@ export async function getKpiData(): Promise<KpiData | null> {
   const { data: latestSession } = await admin.from("assessment_sessions")
     .select("id").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle();
 
-  const [boardResult, riskEntriesResult, maturityResult, incidentsResult] = await Promise.all([
+  const [boardResult, riskEntriesResult, maturityResult, incidentsResult, orgResult] = await Promise.all([
     admin.from("board_meetings").select("risk_agenda_item").eq("user_id", userId).gte("meeting_date", twelveMonthsAgo.toISOString().slice(0, 10)),
-    admin.from("risk_register_entries").select("id, probability_band, impact_direct, impact_regulatory, impact_recovery").eq("user_id", userId),
+    admin.from("risk_register_entries").select("id, probability_band, impact_direct, impact_regulatory, impact_recovery, framework_tags").eq("user_id", userId),
     latestSession
       ? admin.from("maturity_scores").select("maturity_level").eq("session_id", latestSession.id).limit(20)
       : Promise.resolve({ data: [] as { maturity_level: number }[], error: null }),
     admin.from("security_incidents").select("severity, occurred_at, detected_at").eq("user_id", userId).not("detected_at", "is", null),
+    admin.from("organizations").select("risk_tolerance_threshold").eq("user_id", userId).maybeSingle(),
   ]);
 
   const meetings = boardResult.data ?? [];
@@ -667,16 +678,21 @@ export async function getKpiData(): Promise<KpiData | null> {
     : null;
 
   const PROB_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
-  const APPETITE_THRESHOLD = 250000;
+  const appetiteThreshold = Number(orgResult.data?.risk_tolerance_threshold ?? DEFAULT_RISK_APPETITE_THRESHOLD);
   const entries = riskEntriesResult.data ?? [];
   const totalRiskEntries = entries.length;
   const outsideAppetiteCount = entries.filter((e) => {
     const impact = Number(e.impact_direct ?? 0) + Number(e.impact_regulatory ?? 0) + Number(e.impact_recovery ?? 0);
-    return impact * (PROB_MIDPOINT[e.probability_band] ?? 0) > APPETITE_THRESHOLD;
+    return impact * (PROB_MIDPOINT[e.probability_band] ?? 0) > appetiteThreshold;
   }).length;
   const riskAppetiteAdherencePct = totalRiskEntries > 0
     ? Math.round(100 - (outsideAppetiteCount / totalRiskEntries) * 100)
     : null;
+
+  // Framework tags present across the register drive which KPI families surface.
+  const activeFrameworks = Array.from(
+    new Set(entries.flatMap((e) => (e.framework_tags as string[] | null) ?? []))
+  );
 
   const maturityLevels = (maturityResult.data ?? []).map((m) => m.maturity_level);
   const avgMaturityLevel = maturityLevels.length > 0
@@ -703,6 +719,7 @@ export async function getKpiData(): Promise<KpiData | null> {
     avgMaturityLevel,
     mttdCriticalHours: mttdHours("critical"),
     mttdHighHours: mttdHours("high"),
+    activeFrameworks,
     role: ctx.role,
   };
 }
@@ -832,7 +849,7 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
 // all derived from the same row fields, not separate calculators.
 
 const PROBABILITY_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
-const RISK_APPETITE_THRESHOLD = 250000;
+const DEFAULT_RISK_APPETITE_THRESHOLD = 250000;
 
 export interface RiskRegisterEntry {
   id: string;
@@ -855,12 +872,21 @@ export interface RiskRegisterEntry {
   createdAt: string;
 }
 
+export interface DepartmentExposure {
+  division: string;
+  exposure: number;
+  entryCount: number;
+  outsideAppetiteCount: number;
+}
+
 export interface RiskRegisterData {
   entries: RiskRegisterEntry[];
   totalExposure: number;
   outsideAppetiteCount: number;
   openEntries: number;
   roiOfTreatmentPct: number | null;
+  departmentExposure: DepartmentExposure[];
+  toleranceThreshold: number;
   role: "admin" | "viewer";
 }
 
@@ -870,11 +896,11 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
   const { userId } = ctx;
   const admin = createAdminClient();
 
-  const { data: rows } = await admin
-    .from("risk_register_entries")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
+  const [{ data: rows }, { data: orgRow }] = await Promise.all([
+    admin.from("risk_register_entries").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    admin.from("organizations").select("risk_tolerance_threshold").eq("user_id", userId).maybeSingle(),
+  ]);
+  const toleranceThreshold = Number(orgRow?.risk_tolerance_threshold ?? DEFAULT_RISK_APPETITE_THRESHOLD);
 
   const entries: RiskRegisterEntry[] = (rows ?? []).map((r) => {
     const financialImpact = Number(r.impact_direct ?? 0) + Number(r.impact_regulatory ?? 0) + Number(r.impact_recovery ?? 0);
@@ -898,7 +924,7 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
       impactRecovery: Number(r.impact_recovery ?? 0),
       financialImpact,
       exposure,
-      outsideAppetite: exposure > RISK_APPETITE_THRESHOLD,
+      outsideAppetite: exposure > toleranceThreshold,
       frameworkTags: r.framework_tags ?? [],
       division: r.division ?? null,
       owner: r.owner ?? null,
@@ -928,12 +954,27 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
     roiOfTreatmentPct = totalCost > 0 ? ((totalAvoided - totalCost) / totalCost) * 100 : null;
   }
 
+  // Departmental risk exposure = SUM(impact × midpoint(probability)) grouped by
+  // division (EWNAF spec 2.3 — a live aggregate, not manual reconciliation).
+  const deptMap = new Map<string, DepartmentExposure>();
+  for (const e of entries) {
+    const key = e.division?.trim() || "Unassigned";
+    const d = deptMap.get(key) ?? { division: key, exposure: 0, entryCount: 0, outsideAppetiteCount: 0 };
+    d.exposure += e.exposure;
+    d.entryCount += 1;
+    if (e.outsideAppetite) d.outsideAppetiteCount += 1;
+    deptMap.set(key, d);
+  }
+  const departmentExposure = Array.from(deptMap.values()).sort((a, b) => b.exposure - a.exposure);
+
   return {
     entries,
     totalExposure,
     outsideAppetiteCount,
     openEntries,
     roiOfTreatmentPct,
+    departmentExposure,
+    toleranceThreshold,
     role: ctx.role,
   };
 }

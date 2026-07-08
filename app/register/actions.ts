@@ -64,17 +64,32 @@ export async function redeemBetaCode(code: string, email: string): Promise<{ err
   if (!trimmedCode) return { error: "Please enter your invite code." };
 
   const admin = createAdminClient();
+  const now = new Date().toISOString();
   const { data, error } = await admin
     .from("beta_codes")
-    .update({ used_at: new Date().toISOString() })
+    .update({ used_at: now })
     .eq("code", trimmedCode)
     .eq("email", trimmedEmail)
     .is("used_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
     .select("code")
     .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data) return { error: "Invalid invite code, or it doesn't match this email." };
+  if (!data) {
+    // Distinguish an expired code for a clearer message (the atomic claim above
+    // already failed either way; this SELECT is only for wording).
+    const { data: existing } = await admin
+      .from("beta_codes")
+      .select("expires_at, used_at")
+      .eq("code", trimmedCode)
+      .eq("email", trimmedEmail)
+      .maybeSingle();
+    if (existing?.expires_at && new Date(existing.expires_at) <= new Date(now) && !existing.used_at) {
+      return { error: "This invite code has expired. Please request a new invitation." };
+    }
+    return { error: "Invalid invite code, or it doesn't match this email." };
+  }
   return {};
 }
 

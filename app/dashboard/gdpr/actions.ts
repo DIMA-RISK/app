@@ -51,6 +51,7 @@ export async function saveGdprProcess(input: {
   childrenData: boolean;
   lawfulBasis: string | null;
   dataVolume: string | null;
+  transborder: string | null;
   gdprCompliant: string | null;
   notes: string | null;
 }): Promise<{ error?: string }> {
@@ -68,6 +69,7 @@ export async function saveGdprProcess(input: {
     children_data: input.childrenData,
     lawful_basis: input.lawfulBasis,
     data_volume: input.dataVolume,
+    transborder: input.transborder,
     gdpr_compliant: input.gdprCompliant,
     notes: input.notes,
     updated_at: new Date().toISOString(),
@@ -89,6 +91,16 @@ export async function deleteGdprProcess(id: string): Promise<{ error?: string }>
   if (resolved.role !== "admin") return { error: "Viewers cannot delete process register entries" };
   const admin = createAdminClient();
   const { error } = await admin.from("gdpr_process_register").delete().eq("id", id).eq("user_id", resolved.ownerId);
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function saveGdprTargetDate(targetDate: string | null): Promise<{ error?: string }> {
+  const resolved = await getOwner();
+  if ("error" in resolved) return resolved;
+  if (resolved.role !== "admin") return { error: "Viewers cannot set the target date" };
+  const admin = createAdminClient();
+  const { error } = await admin.from("organizations").update({ gdpr_target_date: targetDate }).eq("user_id", resolved.ownerId);
   if (error) return { error: error.message };
   return {};
 }

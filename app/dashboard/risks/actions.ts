@@ -92,3 +92,19 @@ export async function deleteRiskEntry(id: string): Promise<{ error?: string }> {
   if (error) return { error: error.message };
   return {};
 }
+
+export async function saveRiskTolerance(threshold: number): Promise<{ error?: string }> {
+  const resolved = await resolveOwner();
+  if ("error" in resolved) return resolved;
+  if (resolved.role !== "admin") return { error: "Viewers cannot change the tolerance threshold" };
+  if (!Number.isFinite(threshold) || threshold < 0) return { error: "Enter a valid threshold amount" };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("organizations")
+    .update({ risk_tolerance_threshold: threshold })
+    .eq("user_id", resolved.ownerId);
+
+  if (error) return { error: error.message };
+  return {};
+}

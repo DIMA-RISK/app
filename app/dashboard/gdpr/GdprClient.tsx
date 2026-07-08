@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Plus, Trash2, CheckCircle2, AlertCircle, MinusCircle, Circle } from "lucide-react";
 import type { GdprAssessmentData, GdprSection, GdprQuestion, GdprProcessEntry } from "../queries";
-import { saveGdprResponse, saveGdprProcess, deleteGdprProcess } from "./actions";
+import { saveGdprResponse, saveGdprProcess, deleteGdprProcess, saveGdprTargetDate } from "./actions";
 import styles from "../dashboard.module.css";
 
 const RESPONSE_CONFIG = {
@@ -95,6 +95,7 @@ function ProcessModal({ entry, onClose, onSaved }: { entry: GdprProcessEntry | n
     childrenData: entry?.childrenData ?? false,
     lawfulBasis: entry?.lawfulBasis ?? "",
     dataVolume: entry?.dataVolume ?? "low",
+    transborder: entry?.transborder ?? "no",
     gdprCompliant: entry?.gdprCompliant ?? null,
     notes: entry?.notes ?? "",
   });
@@ -104,7 +105,7 @@ function ProcessModal({ entry, onClose, onSaved }: { entry: GdprProcessEntry | n
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const res = await saveGdprProcess({ id: entry?.id, ...form, controllerStatus: form.controllerStatus || null, lawfulBasis: form.lawfulBasis || null, gdprCompliant: (form.gdprCompliant as string | null) || null, notes: form.notes || null, dataVolume: form.dataVolume || null });
+      const res = await saveGdprProcess({ id: entry?.id, ...form, controllerStatus: form.controllerStatus || null, lawfulBasis: form.lawfulBasis || null, gdprCompliant: (form.gdprCompliant as string | null) || null, notes: form.notes || null, dataVolume: form.dataVolume || null, transborder: form.transborder || null });
       if (res.error) { setError(res.error); return; }
       onSaved(); onClose();
     });
@@ -161,6 +162,24 @@ function ProcessModal({ entry, onClose, onSaved }: { entry: GdprProcessEntry | n
             ))}
           </div>
           <div className={styles.field}>
+            <label className={styles.fieldLabel}>Cross-border transfer mechanism</label>
+            <select className={styles.fieldSelect} value={form.transborder} onChange={(e) => setForm({ ...form, transborder: e.target.value })}>
+              <option value="no">No transfer outside EEA</option>
+              <option value="eea">Within EEA</option>
+              <option value="adequacy">Adequacy ruling</option>
+              <option value="dpf">EU-US Data Privacy Framework</option>
+              <option value="scc">Standard Contractual Clauses (SCC)</option>
+              <option value="bcr">Binding Corporate Rules (BCR)</option>
+              <option value="derogation">Derogation (Art. 49)</option>
+              <option value="dont_know">Don&apos;t know</option>
+            </select>
+            {form.transborder === "dpf" && (
+              <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)", marginTop: "0.25rem" }}>
+                Replaces the invalidated US Privacy Shield (Schrems II, 2020).
+              </p>
+            )}
+          </div>
+          <div className={styles.field}>
             <label className={styles.fieldLabel}>GDPR compliant?</label>
             <select className={styles.fieldSelect} value={form.gdprCompliant ?? ""} onChange={(e) => setForm({ ...form, gdprCompliant: e.target.value || null })}>
               <option value="">— not assessed —</option>
@@ -190,6 +209,7 @@ export default function GdprClient({ data }: { data: GdprAssessmentData }) {
   const router = useRouter();
   const [modalEntry, setModalEntry] = useState<GdprProcessEntry | null | "new">(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [targetDate, setTargetDate] = useState(data.targetDate ?? "");
   const canEdit = data.role === "admin";
 
   const pctColor = data.overallCompliancePct >= 75 ? "#22c55e" : data.overallCompliancePct >= 50 ? "#f59e0b" : "#f97316";
@@ -216,7 +236,21 @@ export default function GdprClient({ data }: { data: GdprAssessmentData }) {
           <h1 className={styles.pageTitle}>GDPR Gap Analysis</h1>
           <p className={styles.pageSubtitle}>10-section self-assessment — identify gaps ahead of GDPR compliance</p>
         </div>
-        <div className={styles.pageActions}>
+        <div className={styles.pageActions} style={{ alignItems: "center", gap: "1rem" }}>
+          <label className={`${styles.flex} ${styles.itemsCenter}`} style={{ gap: "0.4rem" }}>
+            <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.5)" }}>Target compliance date</span>
+            <input
+              type="date"
+              className={styles.fieldInput}
+              style={{ maxWidth: 160, padding: "0.35rem 0.5rem" }}
+              value={targetDate}
+              disabled={!canEdit}
+              onChange={(e) => {
+                setTargetDate(e.target.value);
+                saveGdprTargetDate(e.target.value || null);
+              }}
+            />
+          </label>
           <span style={{ fontWeight: 700, fontSize: "1rem", color: pctColor }}>{data.overallCompliancePct}% compliant</span>
         </div>
       </div>

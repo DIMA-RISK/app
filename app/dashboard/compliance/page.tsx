@@ -1,6 +1,7 @@
 import { getComplianceData } from "../queries";
 import ComplianceExportButton from "./ComplianceExportButton";
 import CriticalControlsClient from "./CriticalControlsClient";
+import RegulatoryReference from "./RegulatoryReference";
 import styles from "../dashboard.module.css";
 
 const BAND_COLOR: Record<string, string> = {
@@ -142,6 +143,9 @@ export default async function CompliancePage() {
           />
         </div>
       )}
+
+      {/* Regulatory reference — comparison table + landmark cases */}
+      <RegulatoryReference />
     </>
   );
 }

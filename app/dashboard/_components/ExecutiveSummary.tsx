@@ -346,6 +346,24 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             </div>
           )}
 
+          {/* Beyond the fine — regulatory fines are rarely the largest component
+              of total breach cost (IBM 2024 / Ponemon). */}
+          {data.financialExposureMax !== null && (
+            <div style={{ padding: "0.7rem 0.9rem", background: "rgba(117,76,190,0.06)", border: "1px solid rgba(117,76,190,0.15)", borderRadius: "10px", marginBottom: "1rem" }}>
+              <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "rgba(221,215,234,0.6)", marginBottom: "0.4rem" }}>
+                Beyond the fine — costs this estimate does not include
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                {["Forensic investigation", "Legal defense", "Breach notification", "Credit monitoring", "Insurance premium increases", "Business disruption"].map((c) => (
+                  <span key={c} className={`${styles.badge} ${styles.badgeGray}`} style={{ fontSize: "0.62rem" }}>{c}</span>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.6rem", color: "rgba(221,215,234,0.35)", marginTop: "0.4rem" }}>
+                Per IBM 2024 Cost of a Data Breach, regulatory fines are typically a minority of total breach cost.
+              </div>
+            </div>
+          )}
+
           {/* Framework compliance bars */}
           {data.frameworkId && (
             <>
@@ -570,6 +588,59 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Risk Curve — 5×5 likelihood (by maturity) × impact (by data sensitivity) */}
+      {data.maturityDomains.length > 0 && (
+        <div className={`${styles.card} ${styles.mb15}`}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitleLg}>Risk Curve</h2>
+            <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>likelihood × impact by domain maturity</span>
+          </div>
+          {(() => {
+            // Likelihood = 6 − maturity level (maturity 1 → likelihood 5 "Very Likely" … 5 → 1 "Rare")
+            // Impact column = org data sensitivity level (1–5)
+            const LIK_LABEL = ["", "Rare", "Unlikely", "Possible", "Likely", "Very Likely"];
+            const IMP_LABEL = ["", "Minimal", "Minor", "Moderate", "Major", "Severe"];
+            const impactCol = Math.min(5, Math.max(1, data.dataSensitivityLevel));
+            // bucket domains by likelihood row
+            const byLik: Record<number, string[]> = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+            data.maturityDomains.forEach((d) => {
+              const lik = Math.min(5, Math.max(1, 6 - d.maturityLevel));
+              byLik[lik].push(d.domain);
+            });
+            const cellColor = (lik: number, imp: number) => {
+              const s = lik * imp;
+              return s >= 15 ? "rgba(239,68,68,0.25)" : s >= 9 ? "rgba(245,158,11,0.2)" : s >= 4 ? "rgba(249,115,22,0.12)" : "rgba(34,197,94,0.08)";
+            };
+            return (
+              <div>
+                <div style={{ display: "flex", gap: "0.2rem", marginBottom: "0.2rem", paddingLeft: "5.5rem" }}>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} style={{ flex: 1, textAlign: "center", fontSize: "0.6rem", color: i === impactCol ? "#c4a8f0" : "rgba(221,215,234,0.35)", fontWeight: i === impactCol ? 700 : 400 }}>{IMP_LABEL[i]}</div>
+                  ))}
+                </div>
+                {[5, 4, 3, 2, 1].map((lik) => (
+                  <div key={lik} style={{ display: "flex", alignItems: "center", gap: "0.2rem", marginBottom: "0.2rem" }}>
+                    <div style={{ width: "5.3rem", fontSize: "0.6rem", color: "rgba(221,215,234,0.4)", flexShrink: 0, textAlign: "right", paddingRight: "0.2rem" }}>{LIK_LABEL[lik]}</div>
+                    {[1, 2, 3, 4, 5].map((imp) => {
+                      const domains = imp === impactCol ? byLik[lik] : [];
+                      return (
+                        <div key={imp} title={domains.join(", ")} style={{ flex: 1, height: 34, borderRadius: 4, background: cellColor(lik, imp), border: imp === impactCol ? "1px solid rgba(117,76,190,0.4)" : "1px solid rgba(117,76,190,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {domains.length > 0 && <span style={{ fontWeight: 700, fontSize: "0.72rem", color: "#ddd7ea" }}>{domains.length}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                <div style={{ fontSize: "0.6rem", color: "rgba(221,215,234,0.3)", marginTop: "0.5rem", display: "flex", justifyContent: "space-between" }}>
+                  <span>↑ Likelihood (lower maturity = more likely)</span>
+                  <span>Impact = data sensitivity (L{impactCol}) →</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

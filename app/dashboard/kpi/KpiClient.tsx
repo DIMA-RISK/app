@@ -7,29 +7,34 @@ import type { KpiData } from "../queries";
 import { saveBoardMeeting } from "./actions";
 import styles from "../dashboard.module.css";
 
-function ragColor(pct: number, target: number, higherIsBetter = true): string {
-  const ratio = higherIsBetter ? pct / target : target / pct;
-  if (ratio >= 1.1) return "#22c55e";
-  if (ratio >= 0.9) return "#f59e0b";
-  if (ratio >= 0.7) return "#f97316";
-  return "#ef4444";
+// RAG bands per concept manual §3: ≥110% Exceeds (green), 90–110% Meets (lime),
+// 70–89% Below (amber), <70% Critical (red). ragPct = achievement vs target.
+function ragBand(ragPct: number): { color: string; label: string } {
+  if (ragPct >= 110) return { color: "#22c55e", label: "Exceeds" };
+  if (ragPct >= 90) return { color: "#84cc16", label: "Meets" };
+  if (ragPct >= 70) return { color: "#f59e0b", label: "Below" };
+  return { color: "#ef4444", label: "Critical" };
 }
 
-function KpiCard({ label, value, unit, target, description, framework }: {
+function KpiCard({ label, value, unit, target, description, framework, ragPct }: {
   label: string; value: string | null; unit: string; target: string;
-  description: string; framework: string;
+  description: string; framework: string; ragPct: number | null;
 }) {
   const isEmpty = value === null;
+  const rag = ragPct !== null ? ragBand(ragPct) : null;
   return (
     <div className={styles.statCard}>
       <div className={styles.statCardTop}>
         <span className={styles.statCardLabel}>{label}</span>
         <span className={`${styles.badge} ${styles.badgePurple}`} style={{ fontSize: "0.62rem" }}>{framework}</span>
       </div>
-      <div className={styles.statCardValue} style={{ fontSize: "1.75rem", color: isEmpty ? "rgba(221,215,234,0.3)" : undefined }}>
+      <div className={styles.statCardValue} style={{ fontSize: "1.75rem", color: isEmpty ? "rgba(221,215,234,0.3)" : rag?.color }}>
         {isEmpty ? "—" : value}{!isEmpty && <span style={{ fontSize: "0.9rem", color: "rgba(221,215,234,0.4)" }}>{unit}</span>}
       </div>
-      <div className={styles.statCardSub}>{isEmpty ? "No data yet" : description}</div>
+      <div className={styles.statCardSub}>
+        {rag && <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: rag.color, marginRight: "0.4rem" }} />}
+        {isEmpty ? "No data yet" : (rag ? `${rag.label} · ${description}` : description)}
+      </div>
       <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.35)", marginTop: "0.25rem" }}>Target: {target}</div>
     </div>
   );
@@ -93,6 +98,13 @@ export default function KpiClient({ data }: { data: KpiData }) {
 
   const maturityLabels = ["", "Initial", "Developing", "Defined", "Managed", "Optimized"];
 
+  // Framework-tag → KPI surfacing (EWNAF spec 2.2): show a KPI family only when
+  // its framework tag appears on the org's risk entries. When no tags exist yet,
+  // fall back to showing everything so a new org's dashboard isn't blank.
+  const hasTags = data.activeFrameworks.length > 0;
+  const showIso = !hasTags || data.activeFrameworks.includes("ISO 31000");
+  const showNist = !hasTags || data.activeFrameworks.includes("NIST NRF");
+
   return (
     <>
       {showMeetingModal && (
@@ -105,7 +117,11 @@ export default function KpiClient({ data }: { data: KpiData }) {
       <div className={styles.pageHeader}>
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>KPI Dashboard</h1>
-          <p className={styles.pageSubtitle}>Framework-aware key risk indicators — ISO 31000 + NIST NRF</p>
+          <p className={styles.pageSubtitle}>
+            {hasTags
+              ? `Surfaced by your risk register's framework tags: ${data.activeFrameworks.join(", ")}`
+              : "Framework-aware KPIs — tag risk entries (ISO 31000, NIST NRF) to filter this view"}
+          </p>
         </div>
         {canEdit && (
           <div className={styles.pageActions}>
@@ -116,55 +132,78 @@ export default function KpiClient({ data }: { data: KpiData }) {
         )}
       </div>
 
-      {/* ISO 31000 KPIs */}
-      <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>ISO 31000 — Leadership & Appetite</p>
-      <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
-        <KpiCard
-          label="Board Risk Oversight Frequency"
-          value={data.boardOversightFrequencyPct !== null ? String(data.boardOversightFrequencyPct) : null}
-          unit="%"
-          target="≥90% of meetings"
-          description={`${data.riskInclusiveMeetings}/${data.totalBoardMeetings} meetings with risk agenda item`}
-          framework="ISO 31000"
-        />
-        <KpiCard
-          label="Risk Appetite Adherence"
-          value={data.riskAppetiteAdherencePct !== null ? String(data.riskAppetiteAdherencePct) : null}
-          unit="%"
-          target="100% (all within $250K tolerance)"
-          description={`${data.outsideAppetiteCount} of ${data.totalRiskEntries} entries exceed appetite`}
-          framework="ISO 31000"
-        />
-      </div>
+      {/* ISO 31000 KPIs — surfaced when an entry is tagged ISO 31000 */}
+      {showIso && (
+        <>
+          <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>ISO 31000 — Leadership & Appetite</p>
+          <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
+            <KpiCard
+              label="Board Risk Oversight Frequency"
+              value={data.boardOversightFrequencyPct !== null ? String(data.boardOversightFrequencyPct) : null}
+              unit="%"
+              target="≥90% of meetings"
+              description={`${data.riskInclusiveMeetings}/${data.totalBoardMeetings} meetings with risk agenda item`}
+              framework="ISO 31000"
+              ragPct={data.boardOversightFrequencyPct !== null ? (data.boardOversightFrequencyPct / 90) * 100 : null}
+            />
+            <KpiCard
+              label="Risk Appetite Adherence"
+              value={data.riskAppetiteAdherencePct !== null ? String(data.riskAppetiteAdherencePct) : null}
+              unit="%"
+              target="100% (all within tolerance)"
+              description={`${data.outsideAppetiteCount} of ${data.totalRiskEntries} entries exceed appetite`}
+              framework="ISO 31000"
+              ragPct={data.riskAppetiteAdherencePct}
+            />
+          </div>
+        </>
+      )}
 
-      {/* NIST NRF KPIs */}
-      <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>NIST NRF — Control Maturity & Detection</p>
-      <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
-        <KpiCard
-          label="Control Maturity (avg)"
-          value={data.avgMaturityLevel !== null ? String(data.avgMaturityLevel) : null}
-          unit={data.avgMaturityLevel !== null ? ` — ${maturityLabels[Math.round(data.avgMaturityLevel)] ?? ""}` : ""}
-          target="≥3.0 (Defined)"
-          description="Average maturity level across compliance domains"
-          framework="NIST NRF"
-        />
-        <KpiCard
-          label="MTTD — Critical Incidents"
-          value={data.mttdCriticalHours !== null ? String(data.mttdCriticalHours) : null}
-          unit="h avg"
-          target="≤4 hours"
-          description="Mean time to detect critical-severity incidents"
-          framework="NIST NRF"
-        />
-        <KpiCard
-          label="MTTD — High Incidents"
-          value={data.mttdHighHours !== null ? String(data.mttdHighHours) : null}
-          unit="h avg"
-          target="≤24 hours"
-          description="Mean time to detect high-severity incidents"
-          framework="NIST NRF"
-        />
-      </div>
+      {/* NIST NRF KPIs — surfaced when an entry is tagged NIST NRF */}
+      {showNist && (
+        <>
+          <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>NIST NRF — Control Maturity & Detection</p>
+          <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
+            <KpiCard
+              label="Control Maturity (avg)"
+              value={data.avgMaturityLevel !== null ? String(data.avgMaturityLevel) : null}
+              unit={data.avgMaturityLevel !== null ? ` — ${maturityLabels[Math.round(data.avgMaturityLevel)] ?? ""}` : ""}
+              target="≥3.0 (Defined)"
+              description="Average maturity level across compliance domains"
+              framework="NIST NRF"
+              ragPct={data.avgMaturityLevel !== null ? (data.avgMaturityLevel / 3.0) * 100 : null}
+            />
+            <KpiCard
+              label="MTTD — Critical Incidents"
+              value={data.mttdCriticalHours !== null ? String(data.mttdCriticalHours) : null}
+              unit="h avg"
+              target="≤4 hours"
+              description="Mean time to detect critical-severity incidents"
+              framework="NIST NRF"
+              ragPct={data.mttdCriticalHours !== null && data.mttdCriticalHours > 0 ? (4 / data.mttdCriticalHours) * 100 : null}
+            />
+            <KpiCard
+              label="MTTD — High Incidents"
+              value={data.mttdHighHours !== null ? String(data.mttdHighHours) : null}
+              unit="h avg"
+              target="≤24 hours"
+              description="Mean time to detect high-severity incidents"
+              framework="NIST NRF"
+              ragPct={data.mttdHighHours !== null && data.mttdHighHours > 0 ? (24 / data.mttdHighHours) * 100 : null}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Tags present, but none map to a KPI family */}
+      {hasTags && !showIso && !showNist && (
+        <div className={styles.card} style={{ padding: "1.25rem", marginBottom: "1.5rem" }}>
+          <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)", margin: 0 }}>
+            Your risk entries are tagged {data.activeFrameworks.join(", ")}, which don&apos;t have dedicated KPI families yet.
+            Tag an entry <strong>ISO 31000</strong> or <strong>NIST NRF</strong> to surface those KPIs here.
+          </p>
+        </div>
+      )}
 
       {/* Guidance for empty state */}
       {(data.totalBoardMeetings === 0 || data.totalRiskEntries === 0) && (
