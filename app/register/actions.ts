@@ -65,30 +65,29 @@ export async function redeemBetaCode(code: string, email: string): Promise<{ err
 
   const admin = createAdminClient();
   const now = new Date().toISOString();
+
+  // Atomic claim. We intentionally do NOT reference `expires_at` by name in the
+  // query (no `.or()` filter, `select("*")` instead of naming columns) so this
+  // can never fail with "column expires_at does not exist" if the API schema
+  // cache is lagging behind a migration. Expiry is enforced defensively below,
+  // only when the column is actually present on the returned row.
   const { data, error } = await admin
     .from("beta_codes")
     .update({ used_at: now })
     .eq("code", trimmedCode)
     .eq("email", trimmedEmail)
     .is("used_at", null)
-    .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .select("code")
+    .select("*")
     .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data) {
-    // Distinguish an expired code for a clearer message (the atomic claim above
-    // already failed either way; this SELECT is only for wording).
-    const { data: existing } = await admin
-      .from("beta_codes")
-      .select("expires_at, used_at")
-      .eq("code", trimmedCode)
-      .eq("email", trimmedEmail)
-      .maybeSingle();
-    if (existing?.expires_at && new Date(existing.expires_at) <= new Date(now) && !existing.used_at) {
-      return { error: "This invite code has expired. Please request a new invitation." };
-    }
-    return { error: "Invalid invite code, or it doesn't match this email." };
+  if (!data) return { error: "Invalid invite code, or it doesn't match this email." };
+
+  const expiresAt = (data as { expires_at?: string | null }).expires_at;
+  if (expiresAt && new Date(expiresAt) <= new Date(now)) {
+    // Code was expired — release the claim we just made and reject.
+    await admin.from("beta_codes").update({ used_at: null }).eq("code", trimmedCode);
+    return { error: "This invite code has expired. Please request a new invitation." };
   }
   return {};
 }

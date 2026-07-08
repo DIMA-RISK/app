@@ -499,7 +499,7 @@ export async function getGdprAssessmentData(): Promise<GdprAssessmentData | null
     admin.from("gdpr_questions").select("id, section_id, question, mandatory, sort_order").order("section_id").order("sort_order"),
     admin.from("gdpr_responses").select("question_id, response, documented, comments").eq("user_id", userId),
     admin.from("gdpr_process_register").select("id, process_name, controller_status, personal_data, special_category, children_data, lawful_basis, data_volume, transborder, gdpr_compliant, notes").eq("user_id", userId).order("created_at"),
-    admin.from("organizations").select("gdpr_target_date").eq("user_id", userId).maybeSingle(),
+    admin.from("organizations").select("*").eq("user_id", userId).maybeSingle(),
   ]);
 
   const responseMap = new Map((responsesResult.data ?? []).map((r) => [r.question_id, r]));
@@ -667,7 +667,7 @@ export async function getKpiData(): Promise<KpiData | null> {
       ? admin.from("maturity_scores").select("maturity_level").eq("session_id", latestSession.id).limit(20)
       : Promise.resolve({ data: [] as { maturity_level: number }[], error: null }),
     admin.from("security_incidents").select("severity, occurred_at, detected_at").eq("user_id", userId).not("detected_at", "is", null),
-    admin.from("organizations").select("risk_tolerance_threshold").eq("user_id", userId).maybeSingle(),
+    admin.from("organizations").select("*").eq("user_id", userId).maybeSingle(),
   ]);
 
   const meetings = boardResult.data ?? [];
@@ -898,9 +898,9 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
 
   const [{ data: rows }, { data: orgRow }] = await Promise.all([
     admin.from("risk_register_entries").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-    admin.from("organizations").select("risk_tolerance_threshold").eq("user_id", userId).maybeSingle(),
+    admin.from("organizations").select("*").eq("user_id", userId).maybeSingle(),
   ]);
-  const toleranceThreshold = Number(orgRow?.risk_tolerance_threshold ?? DEFAULT_RISK_APPETITE_THRESHOLD);
+  const toleranceThreshold = Number((orgRow as { risk_tolerance_threshold?: number } | null)?.risk_tolerance_threshold ?? DEFAULT_RISK_APPETITE_THRESHOLD);
 
   const entries: RiskRegisterEntry[] = (rows ?? []).map((r) => {
     const financialImpact = Number(r.impact_direct ?? 0) + Number(r.impact_regulatory ?? 0) + Number(r.impact_recovery ?? 0);
