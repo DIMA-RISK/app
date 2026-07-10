@@ -154,7 +154,7 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const orgUid = org?.org_uid ?? org?.id ?? null;
 
-  const [riskResult, responsesResult, remediationResult, financialResult, frameworkResult, scanResult, riskEntriesResult, maturityResult] =
+  const [riskResult, responsesResult, remediationResult, financialResult, frameworkResult, scanResult, riskEntriesResult, maturityResult, qCountResult] =
     await Promise.all([
       admin
         .from("risk_scores")
@@ -187,13 +187,18 @@ export async function getDashboardData(): Promise<DashboardData> {
         : Promise.resolve({ data: null, error: null }),
       admin.from("risk_register_entries").select("title, probability_band, impact_direct, impact_regulatory, impact_recovery").eq("user_id", userId),
       admin.from("maturity_scores").select("domain, raw_score, maturity_level, label").eq("session_id", session.id).order("raw_score"),
+      admin.from("v_session_questions").select("question_id", { count: "exact", head: true }).eq("session_id", session.id),
     ]);
 
   const responses = responsesResult.data ?? [];
   const yesCount = responses.filter((r) => r.response === "yes").length;
   const partialCount = responses.filter((r) => r.response === "partial").length;
   const noCount = responses.filter((r) => r.response === "no").length;
-  const applicable = responses.filter((r) => r.response !== "na").length;
+  const naCount = responses.filter((r) => r.response === "na").length;
+  // Denominator = all applicable questions (total − N/A). Unanswered count as
+  // gaps so skipped questions can't inflate compliance.
+  const totalQuestions = qCountResult.count ?? responses.length;
+  const applicable = Math.max(0, totalQuestions - naCount);
   const compliancePct =
     applicable > 0
       ? Math.round(((yesCount + partialCount * 0.5) / applicable) * 100)
@@ -398,12 +403,13 @@ export async function getComplianceData(): Promise<ComplianceData | null> {
     .maybeSingle();
   if (!session) return null;
 
-  const [maturityResult, riskResult, responsesResult, ccResult, ccrResult] = await Promise.all([
+  const [maturityResult, riskResult, responsesResult, ccResult, ccrResult, qCountResult] = await Promise.all([
     admin.from("maturity_scores").select("domain, raw_score, maturity_level, label").eq("session_id", session.id),
     admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle(),
     admin.from("questionnaire_responses").select("response").eq("session_id", session.id),
     admin.from("critical_controls").select("id, framework_id, control_ref, control_name").order("framework_id").order("id"),
     admin.from("critical_control_responses").select("control_id, present").eq("user_id", userId),
+    admin.from("v_session_questions").select("question_id", { count: "exact", head: true }).eq("session_id", session.id),
   ]);
 
   const responses = responsesResult.data ?? [];
@@ -411,7 +417,11 @@ export async function getComplianceData(): Promise<ComplianceData | null> {
   const noCount = responses.filter((r) => r.response === "no").length;
   const partialCount = responses.filter((r) => r.response === "partial").length;
   const naCount = responses.filter((r) => r.response === "na").length;
-  const applicable = responses.filter((r) => r.response !== "na").length;
+  // Denominator = all applicable questions (total − N/A), NOT just the answered
+  // ones. Unanswered questions count as gaps, so skipping questions can't inflate
+  // the compliance %. (Fixes pilot "100% compliant despite mostly unanswered".)
+  const totalQuestions = qCountResult.count ?? responses.length;
+  const applicable = Math.max(0, totalQuestions - naCount);
   const compliancePct = applicable > 0 ? Math.round(((yesCount + partialCount * 0.5) / applicable) * 100) : 0;
 
   const presentMap = new Map(

@@ -96,6 +96,17 @@ const BENEFIT_LABELS: Record<string, string> = {
   compliance_cost_avoidance: "Compliance Cost Avoidance",
 };
 
+// How each benefit figure is derived — shown under the label so numbers aren't bare.
+const BENEFIT_NOTES: Record<string, string> = {
+  breach_cost_avoidance: "75% of estimated breach cost",
+  regulatory_fine_avoidance: "85% of worst-case regulatory fines",
+  business_continuity: "1.5% of annual revenue × 3 yrs",
+  reputation_protection: "1% of annual revenue × 3 yrs",
+  operational_efficiency: "0.5% of annual revenue × 3 yrs",
+  cyber_insurance_discount: "up to $75K, scaled by business size",
+  compliance_cost_avoidance: "$75K–$150K band, scaled by your risk score",
+};
+
 function fmtDate(iso: string) {
   try {
     return new Intl.DateTimeFormat("en-CA", {
@@ -497,9 +508,14 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             <div>
               <p className={styles.sectionLabel}>3-Year Benefits</p>
               {Object.entries(data.roi.benefitsBreakdown).map(([key, val]) => (
-                <div key={key} className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ padding: "0.35rem 0", borderBottom: "1px solid rgba(117,76,190,0.07)" }}>
-                  <span className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)" }}>{BENEFIT_LABELS[key] ?? key}</span>
-                  <span className={styles.textSm} style={{ color: "#4ade80", fontWeight: 600 }}>{fmtCurrency(Number(val), data.currency)}</span>
+                <div key={key} className={`${styles.flex} ${styles.justifyBetween}`} style={{ alignItems: "flex-start", padding: "0.35rem 0", borderBottom: "1px solid rgba(117,76,190,0.07)" }}>
+                  <span style={{ minWidth: 0 }}>
+                    <span className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)", display: "block" }}>{BENEFIT_LABELS[key] ?? key}</span>
+                    {BENEFIT_NOTES[key] && (
+                      <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.35)" }}>{BENEFIT_NOTES[key]}</span>
+                    )}
+                  </span>
+                  <span className={styles.textSm} style={{ color: "#4ade80", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtCurrency(Number(val), data.currency)}</span>
                 </div>
               ))}
             </div>

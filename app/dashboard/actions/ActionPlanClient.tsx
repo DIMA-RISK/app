@@ -2,14 +2,31 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Circle, Loader2, Download } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, Download, AlertTriangle, ChevronsUp, ChevronUp, Minus } from "lucide-react";
 import type { ActionPlanData } from "../queries";
 import { updateTaskStatus } from "./taskActions";
 import styles from "../dashboard.module.css";
 
-const PRIORITY_CLASS: Record<string, string> = {
-  critical: styles.badgeCritical, high: styles.badgeHigh, medium: styles.badgeMedium, low: styles.badgeLow,
+// Distinct color + icon per priority so High and Medium are unmistakable at a glance.
+const PRIORITY_META: Record<string, { label: string; color: string; Icon: typeof AlertTriangle }> = {
+  critical: { label: "Critical", color: "#ef4444", Icon: AlertTriangle },
+  high:     { label: "High",     color: "#f97316", Icon: ChevronsUp },
+  medium:   { label: "Medium",   color: "#eab308", Icon: ChevronUp },
+  low:      { label: "Low",      color: "#22c55e", Icon: Minus },
 };
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const m = PRIORITY_META[priority] ?? PRIORITY_META.medium;
+  const Icon = m.Icon;
+  return (
+    <span
+      className={styles.badge}
+      style={{ background: `${m.color}1f`, color: m.color, border: `1px solid ${m.color}55`, display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
+    >
+      <Icon size={11} /> {m.label}
+    </span>
+  );
+}
 const EFFORT_CLASS: Record<string, string> = {
   "quick-win": styles.badgeGreen, medium: styles.badgeInfo, complex: styles.badgeHigh,
 };
@@ -126,6 +143,20 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
         ))}
       </div>
 
+      {/* Priority legend */}
+      <div className={`${styles.flex} ${styles.gap1}`} style={{ flexWrap: "wrap", margin: "0.5rem 0 1rem" }}>
+        <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>Priority:</span>
+        {(["critical", "high", "medium", "low"] as const).map((p) => {
+          const m = PRIORITY_META[p];
+          const Icon = m.Icon;
+          return (
+            <span key={p} className={`${styles.flex} ${styles.itemsCenter}`} style={{ gap: "0.25rem", color: m.color, fontSize: "0.72rem", fontWeight: 600 }}>
+              <Icon size={12} /> {m.label}
+            </span>
+          );
+        })}
+      </div>
+
       {filtered.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyText}>No tasks match this filter.</p>
@@ -134,7 +165,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
         <div className={styles.flexCol} style={{ gap: "0.75rem" }}>
           {filtered.map((task) => {
             const isThisPending = pendingId === task.id;
-            const borderColor = task.priority === "critical" ? "#ef4444" : task.priority === "high" ? "#f97316" : "#f59e0b";
+            const borderColor = (PRIORITY_META[task.priority] ?? PRIORITY_META.medium).color;
             const canEdit = data.role === "admin";
 
             return (
@@ -164,7 +195,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                     </span>
                   </div>
                   <div className={`${styles.flex} ${styles.gap04}`}>
-                    <span className={`${styles.badge} ${PRIORITY_CLASS[task.priority] ?? styles.badgeMedium}`}>{task.priority}</span>
+                    <PriorityBadge priority={task.priority} />
                     <span className={`${styles.badge} ${EFFORT_CLASS[task.effort] ?? styles.badgeInfo}`}>{task.effort}</span>
                   </div>
                 </div>

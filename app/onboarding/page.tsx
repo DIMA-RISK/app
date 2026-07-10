@@ -95,6 +95,11 @@ export default function OnboardingPage() {
   const domainQuestions = questions.filter((q) => (q.domain ?? "General") === currentDomain);
   const totalAnswered = Object.keys(answers).length;
   const totalQuestions = questions.length;
+  const currentDomainAnswered = domainQuestions.every((q) => answers[answerKey(q)]);
+  const allAnswered = questions.every((q) => answers[answerKey(q)]);
+  const firstUnansweredDomainIndex = domains.findIndex((d) =>
+    questions.filter((q) => (q.domain ?? "General") === d).some((q) => !answers[answerKey(q)])
+  );
 
   function answerKey(q: Question) {
     return `${q.question_id}_${q.framework_id}`;
@@ -109,17 +114,24 @@ export default function OnboardingPage() {
   }
 
   async function handleComplete() {
+    // Every question must be answered — unanswered questions would otherwise be
+    // silently dropped, inflating the compliance score and decoupling it from
+    // risk. N/A is available for genuinely non-applicable controls.
+    if (questions.length > 0 && !allAnswered) {
+      setError(`Please answer all ${totalQuestions} questions before completing (${totalQuestions - totalAnswered} remaining). Use "N/A" for controls that don't apply.`);
+      if (firstUnansweredDomainIndex >= 0) setStep(firstUnansweredDomainIndex);
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
-    const entries = questions
-      .filter((q) => answers[answerKey(q)])
-      .map((q) => ({
-        session_id: q.session_id,
-        question_id: q.question_id,
-        framework_id: q.framework_id,
-        response: answers[answerKey(q)] as Answer,
-      }));
+    const entries = questions.map((q) => ({
+      session_id: q.session_id,
+      question_id: q.question_id,
+      framework_id: q.framework_id,
+      response: answers[answerKey(q)] as Answer,
+    }));
 
     const { error: err } = await saveOnboardingAnswers(entries, orgProfile);
     if (err) { setError(err); setSaving(false); return; }
@@ -278,13 +290,15 @@ export default function OnboardingPage() {
         )}
 
         {error && <p className={styles.errorMsg}>{error}</p>}
+        {!isOrgProfileStep && !currentDomainAnswered && (
+          <p className={styles.domainHint} style={{ textAlign: "right", color: "rgba(245,158,11,0.9)" }}>
+            Answer every question in this section to continue — use “N/A” where a control doesn’t apply.
+          </p>
+        )}
 
         {/* Navigation */}
         <div className={styles.navRow}>
-          <button className={styles.ghostBtn} onClick={handleSkip} disabled={saving}>
-            Skip for now
-          </button>
-          <div className={styles.navRight}>
+          <div className={styles.navRight} style={{ marginLeft: "auto" }}>
             {step > 0 && (
               <button className={styles.secondaryBtn} onClick={() => setStep((s) => s - 1)} disabled={saving}>
                 Previous
@@ -295,11 +309,11 @@ export default function OnboardingPage() {
                 {saving ? "Calculating score…" : "Complete Setup"}
               </button>
             ) : isLastQuestionnaireStep ? (
-              <button className={styles.primaryBtn} onClick={() => setStep(domains.length)} disabled={saving}>
+              <button className={styles.primaryBtn} onClick={() => setStep(domains.length)} disabled={saving || !currentDomainAnswered}>
                 Next: Organization Profile
               </button>
             ) : (
-              <button className={styles.primaryBtn} onClick={() => setStep((s) => s + 1)} disabled={saving}>
+              <button className={styles.primaryBtn} onClick={() => setStep((s) => s + 1)} disabled={saving || !currentDomainAnswered}>
                 Next Section
               </button>
             )}

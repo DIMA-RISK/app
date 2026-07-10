@@ -2369,3 +2369,220 @@ END; $$;
 -- =====================
 ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS risk_tolerance_threshold NUMERIC(14,2) DEFAULT 250000;
+
+-- =====================
+-- ADDENDUM 17: questionnaire compliance gap now treats UNANSWERED questions as
+-- gaps (pilot bug: skipping questions inflated compliance and understated risk).
+-- Gap % for the assigned framework = 100 - (yes + 0.5*partial) / (total questions - na) * 100,
+-- so unanswered questions count fully against compliance. Everything else
+-- (Option C 4-framework average, EWNAF 60/40 blend) is unchanged.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE OR REPLACE FUNCTION calculate_risk_score(p_session_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_user_id          UUID;
+  v_framework_id     TEXT;
+  v_org_uid          BIGINT;
+  v_records          BIGINT;
+  v_gb               NUMERIC;
+  v_has_health       BOOLEAN;
+  v_has_financial    BOOLEAN;
+  v_has_pii          BOOLEAN;
+  v_sensitivity      INT;
+  v_vendors          INT;
+  v_access_level     INT;
+  v_share_pct        NUMERIC;
+  v_volume_risk      NUMERIC;
+  v_sensitivity_risk NUMERIC;
+  v_third_party_risk NUMERIC;
+  v_gap_risk         NUMERIC;
+  v_q_total          INT;
+  v_yes              INT;
+  v_partial          INT;
+  v_na               INT;
+  v_applicable       INT;
+  v_gap_pct          NUMERIC;
+  v_iso_gap          NUMERIC;
+  v_gdpr_gap         NUMERIC;
+  v_hipaa_gap        NUMERIC;
+  v_pipeda_gap       NUMERIC;
+  v_gap_avg          NUMERIC;
+  v_ewnaf_overall    NUMERIC;
+  v_ewnaf_high_risk  NUMERIC;
+  v_ewnaf_defense    NUMERIC;
+  v_gap_combined     NUMERIC;
+  v_risk_band        TEXT;
+BEGIN
+  SELECT s.user_id, s.framework_id
+  INTO   v_user_id, v_framework_id
+  FROM   assessment_sessions s WHERE s.id = p_session_id;
+
+  IF v_user_id IS NULL THEN RETURN; END IF;
+
+  SELECT
+    COALESCE(o.patient_records_count, 0),
+    COALESCE(o.data_storage_gb, 0),
+    COALESCE(o.has_health_data, false),
+    COALESCE(o.has_financial_data, false),
+    COALESCE(o.has_pii_data, false),
+    COALESCE(o.data_sensitivity_level, 3),
+    COALESCE(o.vendor_count, 0),
+    COALESCE(o.max_vendor_access_level, 1),
+    COALESCE(o.vendor_data_share_pct, 0),
+    o.org_uid
+  INTO v_records, v_gb, v_has_health, v_has_financial, v_has_pii,
+       v_sensitivity, v_vendors, v_access_level, v_share_pct, v_org_uid
+  FROM organizations o WHERE o.user_id = v_user_id;
+
+  v_volume_risk := LEAST(25, (v_records::NUMERIC / 10000.0) + (v_gb / 100.0));
+
+  v_sensitivity_risk := (v_sensitivity * 3)
+    + CASE WHEN v_has_health    THEN 8 ELSE 0 END
+    + CASE WHEN v_has_financial THEN 5 ELSE 0 END
+    + CASE WHEN v_has_pii      THEN 4 ELSE 0 END;
+  v_sensitivity_risk := LEAST(25, v_sensitivity_risk);
+
+  v_third_party_risk := LEAST(25, (v_vendors * 2.0) + (v_access_level * 3.0) + (v_share_pct / 4.0));
+
+  -- Assigned-framework questionnaire gap — UNANSWERED questions count as gaps.
+  SELECT COUNT(*) INTO v_q_total
+  FROM v_session_questions vq WHERE vq.session_id = p_session_id;
+
+  SELECT
+    COUNT(*) FILTER (WHERE r.response = 'yes'),
+    COUNT(*) FILTER (WHERE r.response = 'partial'),
+    COUNT(*) FILTER (WHERE r.response = 'na')
+  INTO v_yes, v_partial, v_na
+  FROM questionnaire_responses r WHERE r.session_id = p_session_id;
+
+  v_applicable := v_q_total - COALESCE(v_na, 0);
+  v_gap_pct := CASE
+    WHEN v_applicable > 0
+      THEN 100 - ((COALESCE(v_yes,0) + 0.5 * COALESCE(v_partial,0))::NUMERIC / v_applicable * 100)
+    ELSE 50
+  END;
+
+  SELECT COALESCE((COUNT(*) FILTER (WHERE NOT COALESCE(r.present, false)))::NUMERIC
+    / NULLIF(COUNT(*), 0) * 100, 100)
+  INTO v_iso_gap
+  FROM critical_controls c
+  LEFT JOIN critical_control_responses r ON r.control_id = c.id AND r.user_id = v_user_id
+  WHERE c.framework_id = 'iso27001';
+
+  SELECT COALESCE((COUNT(*) FILTER (WHERE NOT COALESCE(r.present, false)))::NUMERIC
+    / NULLIF(COUNT(*), 0) * 100, 100)
+  INTO v_gdpr_gap
+  FROM critical_controls c
+  LEFT JOIN critical_control_responses r ON r.control_id = c.id AND r.user_id = v_user_id
+  WHERE c.framework_id = 'gdpr';
+
+  IF v_framework_id = 'hipaa' THEN
+    v_hipaa_gap := v_gap_pct;
+  ELSE
+    SELECT COALESCE((COUNT(*) FILTER (WHERE NOT COALESCE(r.present, false)))::NUMERIC
+      / NULLIF(COUNT(*), 0) * 100, 100)
+    INTO v_hipaa_gap
+    FROM critical_controls c
+    LEFT JOIN critical_control_responses r ON r.control_id = c.id AND r.user_id = v_user_id
+    WHERE c.framework_id = 'hipaa';
+  END IF;
+
+  IF v_framework_id = 'pipeda' THEN
+    v_pipeda_gap := v_gap_pct;
+  ELSE
+    SELECT COALESCE((COUNT(*) FILTER (WHERE NOT COALESCE(r.present, false)))::NUMERIC
+      / NULLIF(COUNT(*), 0) * 100, 100)
+    INTO v_pipeda_gap
+    FROM critical_controls c
+    LEFT JOIN critical_control_responses r ON r.control_id = c.id AND r.user_id = v_user_id
+    WHERE c.framework_id = 'pipeda';
+  END IF;
+
+  v_gap_avg := (v_iso_gap + v_gdpr_gap + v_hipaa_gap + v_pipeda_gap) / 4.0;
+
+  SELECT
+    (r.results->'score'->>'overall')::NUMERIC,
+    (r.results->'score'->>'high_risk_count')::NUMERIC
+  INTO v_ewnaf_overall, v_ewnaf_high_risk
+  FROM fact_software_results r
+  WHERE r.org_uid = v_org_uid
+  ORDER BY r.created_at DESC LIMIT 1;
+
+  IF v_ewnaf_overall IS NOT NULL THEN
+    v_ewnaf_defense := GREATEST(0, LEAST(100,
+      100 - (v_ewnaf_overall * 2) - (COALESCE(v_ewnaf_high_risk, 0) * 15)
+    ));
+    v_gap_combined := 0.6 * v_gap_avg + 0.4 * (100.0 - v_ewnaf_defense);
+  ELSE
+    v_gap_combined := v_gap_avg;
+  END IF;
+
+  v_gap_risk := (v_gap_combined / 100.0) * 25;
+
+  v_risk_band := CASE
+    WHEN (v_volume_risk + v_sensitivity_risk + v_third_party_risk + v_gap_risk) >= 80 THEN 'critical'
+    WHEN (v_volume_risk + v_sensitivity_risk + v_third_party_risk + v_gap_risk) >= 60 THEN 'high'
+    WHEN (v_volume_risk + v_sensitivity_risk + v_third_party_risk + v_gap_risk) >= 40 THEN 'medium'
+    ELSE 'low'
+  END;
+
+  INSERT INTO risk_scores (
+    session_id, framework_id,
+    likelihood_score, impact_score, control_score, exposure_score, risk_band
+  ) VALUES (
+    p_session_id, v_framework_id,
+    ROUND(v_gap_risk, 2), ROUND(v_sensitivity_risk, 2),
+    ROUND(v_third_party_risk, 2), ROUND(v_volume_risk, 2), v_risk_band
+  )
+  ON CONFLICT (session_id, framework_id) DO UPDATE SET
+    likelihood_score = EXCLUDED.likelihood_score,
+    impact_score     = EXCLUDED.impact_score,
+    control_score    = EXCLUDED.control_score,
+    exposure_score   = EXCLUDED.exposure_score,
+    risk_band        = EXCLUDED.risk_band,
+    calculated_at    = NOW();
+
+  INSERT INTO maturity_scores (session_id, framework_id, domain, raw_score, maturity_level, label)
+  SELECT
+    p_session_id, v_framework_id,
+    COALESCE(vq.domain, 'General'),
+    ROUND(100.0 * COUNT(*) FILTER (WHERE qr.response = 'yes')
+      / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0), 2),
+    CASE
+      WHEN COUNT(*) FILTER (WHERE qr.response != 'na') = 0 THEN 1
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.9 THEN 5
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.75 THEN 4
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.5 THEN 3
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.25 THEN 2
+      ELSE 1
+    END,
+    CASE
+      WHEN COUNT(*) FILTER (WHERE qr.response != 'na') = 0 THEN 'Initial'
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.9 THEN 'Optimized'
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.75 THEN 'Managed'
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.5 THEN 'Defined'
+      WHEN (COUNT(*) FILTER (WHERE qr.response = 'yes'))::NUMERIC
+           / NULLIF(COUNT(*) FILTER (WHERE qr.response != 'na'), 0) >= 0.25 THEN 'Developing'
+      ELSE 'Initial'
+    END
+  FROM v_session_questions vq
+  LEFT JOIN questionnaire_responses qr
+    ON qr.session_id  = p_session_id
+    AND qr.question_id = vq.question_id
+    AND qr.framework_id = vq.framework_id
+  WHERE vq.session_id = p_session_id
+  GROUP BY COALESCE(vq.domain, 'General')
+  ON CONFLICT ON CONSTRAINT uq_maturity_session_fw_domain DO UPDATE SET
+    raw_score      = EXCLUDED.raw_score,
+    maturity_level = EXCLUDED.maturity_level,
+    label          = EXCLUDED.label,
+    calculated_at  = NOW();
+END; $$;
