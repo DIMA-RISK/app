@@ -2,34 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Circle, Loader2, Download, AlertTriangle, ChevronsUp, ChevronUp, Minus } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, Download } from "lucide-react";
 import type { ActionPlanData } from "../queries";
 import { updateTaskStatus } from "./taskActions";
+import { SeverityBadge, SeverityLegend, SEVERITY_META, LabeledBadge, EFFORT_COLOR, STATUS_COLOR, STATUS_LABEL } from "../_components/SeverityBadge";
 import styles from "../dashboard.module.css";
-
-// Distinct color + icon per priority so High and Medium are unmistakable at a glance.
-const PRIORITY_META: Record<string, { label: string; color: string; Icon: typeof AlertTriangle }> = {
-  critical: { label: "Critical", color: "#ef4444", Icon: AlertTriangle },
-  high:     { label: "High",     color: "#f97316", Icon: ChevronsUp },
-  medium:   { label: "Medium",   color: "#eab308", Icon: ChevronUp },
-  low:      { label: "Low",      color: "#22c55e", Icon: Minus },
-};
-
-function PriorityBadge({ priority }: { priority: string }) {
-  const m = PRIORITY_META[priority] ?? PRIORITY_META.medium;
-  const Icon = m.Icon;
-  return (
-    <span
-      className={styles.badge}
-      style={{ background: `${m.color}1f`, color: m.color, border: `1px solid ${m.color}55`, display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
-    >
-      <Icon size={11} /> {m.label}
-    </span>
-  );
-}
-const EFFORT_CLASS: Record<string, string> = {
-  "quick-win": styles.badgeGreen, medium: styles.badgeInfo, complex: styles.badgeHigh,
-};
 const STATUS_CYCLE: Record<string, "open" | "in_progress" | "resolved"> = {
   open: "in_progress",
   "in_progress": "resolved",
@@ -38,11 +15,12 @@ const STATUS_CYCLE: Record<string, "open" | "in_progress" | "resolved"> = {
 const FILTERS = ["all", "open", "in_progress", "resolved", "high", "medium"];
 
 function exportCsv(tasks: ActionPlanData["tasks"]) {
-  const headers = ["Title", "Description", "Category", "Priority", "Effort", "Status", "Due Date"];
+  const headers = ["Title", "Description", "Category", "Source", "Priority", "Effort", "Status", "Due Date"];
   const rows = tasks.map((t) => [
     t.title,
     t.description ?? "",
     t.category,
+    t.source === "scan" ? "Network Scan" : "Questionnaire",
     t.priority,
     t.effort,
     t.status,
@@ -103,7 +81,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
       <div className={styles.pageHeader}>
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>Action Plan</h1>
-          <p className={styles.pageSubtitle}>Prioritized remediation tasks based on your compliance assessment</p>
+          <p className={styles.pageSubtitle}>Ranked by finding severity, then by the priority of the KPI each task unblocks</p>
         </div>
         <div className={styles.pageActions}>
           <span className={`${styles.badge} ${styles.badgePurple}`} style={{ fontSize: "0.8rem", padding: "0.3rem 0.75rem" }}>
@@ -144,17 +122,8 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
       </div>
 
       {/* Priority legend */}
-      <div className={`${styles.flex} ${styles.gap1}`} style={{ flexWrap: "wrap", margin: "0.5rem 0 1rem" }}>
-        <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>Priority:</span>
-        {(["critical", "high", "medium", "low"] as const).map((p) => {
-          const m = PRIORITY_META[p];
-          const Icon = m.Icon;
-          return (
-            <span key={p} className={`${styles.flex} ${styles.itemsCenter}`} style={{ gap: "0.25rem", color: m.color, fontSize: "0.72rem", fontWeight: 600 }}>
-              <Icon size={12} /> {m.label}
-            </span>
-          );
-        })}
+      <div style={{ margin: "0.5rem 0 1rem" }}>
+        <SeverityLegend note="priority of the remediation task" />
       </div>
 
       {filtered.length === 0 ? (
@@ -165,7 +134,7 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
         <div className={styles.flexCol} style={{ gap: "0.75rem" }}>
           {filtered.map((task) => {
             const isThisPending = pendingId === task.id;
-            const borderColor = (PRIORITY_META[task.priority] ?? PRIORITY_META.medium).color;
+            const borderColor = (SEVERITY_META[task.priority] ?? SEVERITY_META.medium).color;
             const canEdit = data.role === "admin";
 
             return (
@@ -195,8 +164,8 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                     </span>
                   </div>
                   <div className={`${styles.flex} ${styles.gap04}`}>
-                    <PriorityBadge priority={task.priority} />
-                    <span className={`${styles.badge} ${EFFORT_CLASS[task.effort] ?? styles.badgeInfo}`}>{task.effort}</span>
+                    <SeverityBadge level={task.priority} dimension="Priority" title="Priority of this remediation task" />
+                    <LabeledBadge dimension="Effort" value={task.effort === "quick-win" ? "Quick Win" : task.effort.charAt(0).toUpperCase() + task.effort.slice(1)} color={EFFORT_COLOR[task.effort] ?? "#94a3b8"} />
                   </div>
                 </div>
                 {task.description && (
@@ -207,6 +176,25 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                 <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ marginLeft: "2rem" }}>
                   <div className={`${styles.flex} ${styles.gap04}`}>
                     <span className={`${styles.badge} ${styles.badgePurple}`}>{task.category}</span>
+                    <span
+                      className={styles.badge}
+                      title={task.source === "scan" ? "Generated from a network-scan finding" : "Generated from a questionnaire answer"}
+                      style={{ background: "rgba(96,165,250,0.12)", color: "#93c5fd", border: "1px solid rgba(96,165,250,0.28)" }}
+                    >
+                      From: {task.source === "scan" ? "Network Scan" : "Questionnaire"}
+                    </span>
+                    {task.kpi && (() => {
+                      const kc = (SEVERITY_META[task.kpi.priority] ?? SEVERITY_META.medium).color;
+                      return (
+                        <span
+                          className={styles.badge}
+                          title={`Blocks a ${task.kpi.priority}-priority KPI: "${task.kpi.name}"${task.kpi.owner ? ` (owner: ${task.kpi.owner})` : ""}. Ranked above same-severity tasks linked to lower-priority KPIs.`}
+                          style={{ background: `${kc}1f`, color: kc, border: `1px solid ${kc}55`, cursor: "help" }}
+                        >
+                          Blocks KPI: {task.kpi.name}
+                        </span>
+                      );
+                    })()}
                     {task.dueDate && (
                       <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>
                         Due: {new Date(task.dueDate).toLocaleDateString("en-CA")}
@@ -216,11 +204,15 @@ export default function ActionPlanClient({ data }: { data: ActionPlanData }) {
                   <button
                     onClick={() => handleStatusClick(task.id, task.status)}
                     disabled={!canEdit || !!pendingId}
-                    title={canEdit ? `Click to mark ${STATUS_CYCLE[task.status] ?? "open"}` : undefined}
-                    className={`${styles.badge} ${task.status === "resolved" ? styles.badgeGreen : task.status === "in_progress" ? styles.badgeMedium : styles.badgeGray}`}
-                    style={{ cursor: canEdit ? "pointer" : "default", border: "none" }}
+                    title={canEdit ? `Status: ${STATUS_LABEL[task.status] ?? task.status} — click to mark ${STATUS_LABEL[STATUS_CYCLE[task.status]] ?? "open"}` : `Status: ${STATUS_LABEL[task.status] ?? task.status}`}
+                    className={styles.badge}
+                    style={{
+                      cursor: canEdit ? "pointer" : "default", border: `1px solid ${(STATUS_COLOR[task.status] ?? "#94a3b8")}44`,
+                      background: `${STATUS_COLOR[task.status] ?? "#94a3b8"}1f`, color: STATUS_COLOR[task.status] ?? "#94a3b8",
+                      display: "inline-flex", alignItems: "center", gap: "0.25rem",
+                    }}
                   >
-                    {task.status === "in_progress" ? "in progress" : task.status}
+                    <span style={{ opacity: 0.7, fontWeight: 500 }}>Status:</span> {STATUS_LABEL[task.status] ?? task.status}
                   </button>
                 </div>
               </div>

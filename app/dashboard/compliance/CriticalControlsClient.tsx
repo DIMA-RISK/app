@@ -60,6 +60,21 @@ export default function CriticalControlsClient({
         </span>
       </div>
 
+      {/* Clarify what the per-framework "risk" band means here: it rates the
+          NON-COMPLIANCE GAP (share of required controls still missing), which is
+          a different axis than a remediation task's priority. */}
+      <div
+        className={styles.textXs}
+        title="Gap % = share of this framework's critical controls not yet in place. The band rates how severe that non-compliance gap is — not the urgency of any single task."
+        style={{ color: "rgba(221,215,234,0.4)", marginBottom: "0.9rem", cursor: "help" }}
+      >
+        Each band rates a framework&rsquo;s <strong style={{ color: "rgba(221,215,234,0.6)" }}>non-compliance gap</strong> — the share of required controls still missing:{" "}
+        <span style={{ color: "#22c55e" }}>0–25% Well-controlled</span> ·{" "}
+        <span style={{ color: "#f59e0b" }}>26–50% Moderate</span> ·{" "}
+        <span style={{ color: "#f97316" }}>51–75% High</span> ·{" "}
+        <span style={{ color: "#ef4444" }}>76–100% Critical</span>
+      </div>
+
       <div className={styles.grid2} style={{ gap: "1.25rem" }}>
         {frameworks.map((fw) => {
           const fwControls = items.filter((c) => c.frameworkId === fw);

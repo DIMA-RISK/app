@@ -78,6 +78,9 @@ export interface DashboardData {
   greeting: string;
   riskScore: number;
   riskBand: "critical" | "high" | "medium" | "low" | null;
+  // The four 0–25 components that sum to the risk score (EWNAF spec §4.2), so a
+  // high score can be explained (or flagged as wrong) instead of looking broken.
+  riskComponents: { volume: number; sensitivity: number; thirdParty: number; complianceGap: number } | null;
   compliancePct: number;
   openCritical: number;
   yesCount: number;
@@ -86,9 +89,12 @@ export interface DashboardData {
   totalControls: number;
   frameworkId: string | null;
   frameworkName: string | null;
-  tasks: { title: string; priority: string; effort: string; description: string | null }[];
+  tasks: { title: string; priority: string; effort: string; description: string | null; source: "questionnaire" | "scan" }[];
   financialExposureMin: number | null;
   financialExposureMax: number | null;
+  recordsAtRisk: number | null;
+  perRecordRate: number | null;
+  perRecordBasis: string;
   currency: string;
   snapshotDate: string;
   hasSession: boolean;
@@ -108,6 +114,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     greeting,
     riskScore: 0,
     riskBand: null,
+    riskComponents: null,
     compliancePct: 0,
     openCritical: 0,
     yesCount: 0,
@@ -119,6 +126,9 @@ export async function getDashboardData(): Promise<DashboardData> {
     tasks: [],
     financialExposureMin: null,
     financialExposureMax: null,
+    recordsAtRisk: null,
+    perRecordRate: null,
+    perRecordBasis: "general PII",
     currency: "CAD",
     snapshotDate: new Date().toISOString(),
     hasSession: false,
@@ -136,7 +146,7 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const { data: org } = await admin
     .from("organizations")
-    .select("org_name, org_uid, id, data_sensitivity_level")
+    .select("*")
     .eq("user_id", userId)
     .single();
 
@@ -158,7 +168,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     await Promise.all([
       admin
         .from("risk_scores")
-        .select("total_score, risk_band, calculated_at")
+        .select("total_score, risk_band, calculated_at, exposure_score, impact_score, control_score, likelihood_score")
         .eq("session_id", session.id)
         .maybeSingle(),
       admin
@@ -167,7 +177,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         .eq("session_id", session.id),
       admin
         .from("remediation_roadmap")
-        .select("title, priority, effort, description")
+        .select("*")
         .eq("user_id", userId)
         .eq("status", "open")
         .order("priority_rank")
@@ -209,6 +219,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     priority: t.priority ?? "medium",
     effort: t.effort ?? "medium",
     description: t.description ?? null,
+    source: ((t as { source?: string }).source === "scan" ? "scan" : "questionnaire") as "questionnaire" | "scan",
   }));
 
   const activity: DashboardData["activity"] = [];
@@ -222,6 +233,21 @@ export async function getDashboardData(): Promise<DashboardData> {
     activity.push({ type: "info", text: "Compliance questionnaire answers saved", timestamp: session.started_at });
   }
   activity.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  // Per-record breach basis (IBM 2024 Cost of a Data Breach — per-record rates
+  // by data type). Records at risk = sensitive records × the share exposed to
+  // third parties. Kept separate from the total so the exposure figure reads as
+  // "$X total · Y records × $Z/record" rather than an unexplained lump sum.
+  const orgAny = (org ?? {}) as Record<string, unknown>;
+  const hasHealth = Boolean(orgAny.has_health_data);
+  const hasFinancial = Boolean(orgAny.has_financial_data);
+  const perRecordRate = hasHealth ? 10.93 : hasFinancial ? 5.85 : 4.35;
+  const perRecordBasis = hasHealth ? "health record" : hasFinancial ? "financial record" : "general PII record";
+  const patientRecords = Number(orgAny.patient_records_count ?? 0);
+  const sharePct = Number(orgAny.vendor_data_share_pct ?? 0);
+  const recordsAtRisk = patientRecords > 0
+    ? Math.round(patientRecords * (sharePct > 0 ? sharePct / 100 : 1))
+    : null;
 
   const roi: RoiData | null =
     financialResult.data?.roi_pct != null
@@ -241,6 +267,16 @@ export async function getDashboardData(): Promise<DashboardData> {
     greeting,
     riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
     riskBand: (riskResult.data?.risk_band as DashboardData["riskBand"]) ?? null,
+    // exposure_score=Volume, impact_score=Sensitivity, control_score=Third-Party,
+    // likelihood_score=Compliance Gap (schema_migration.sql §4.2 mapping).
+    riskComponents: riskResult.data
+      ? {
+          volume: Math.round(Number(riskResult.data.exposure_score ?? 0)),
+          sensitivity: Math.round(Number(riskResult.data.impact_score ?? 0)),
+          thirdParty: Math.round(Number(riskResult.data.control_score ?? 0)),
+          complianceGap: Math.round(Number(riskResult.data.likelihood_score ?? 0)),
+        }
+      : null,
     compliancePct,
     openCritical: tasks.filter((t) => t.priority === "critical").length,
     yesCount,
@@ -258,6 +294,9 @@ export async function getDashboardData(): Promise<DashboardData> {
       financialResult.data?.total_exposure_max != null
         ? Number(financialResult.data.total_exposure_max)
         : null,
+    recordsAtRisk,
+    perRecordRate,
+    perRecordBasis,
     currency: financialResult.data?.currency ?? "CAD",
     snapshotDate: session.completed_at ?? new Date().toISOString(),
     hasSession: true,
@@ -640,7 +679,47 @@ export async function getIso27001Data(): Promise<Iso27001Data | null> {
 
 // ─── KPI Dashboard ────────────────────────────────────────────────────────────
 
+export interface KpiDefinition {
+  id: string;
+  name: string;
+  frameworkTag: string | null;
+  controlCategory: "technical" | "administrative" | "physical" | null;
+  priority: "critical" | "high" | "medium" | "low";
+  executiveOwner: string | null;
+  target: string | null;
+  description: string | null;
+}
+
+// Priority rank shared by severity and KPI priority (lower = more urgent).
+// Module-private: this file is "use server", so only async functions may be
+// exported. These helpers are used only within queries.ts.
+const PRIORITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+// A task inherits the highest-priority KPI whose framework + category match it.
+// framework_tag NULL/'all' = any framework; control_category NULL = any category.
+function matchKpiForTask(
+  defs: KpiDefinition[],
+  taskCategory: string,
+  frameworkId: string | null,
+  frameworkName: string | null,
+): KpiDefinition | null {
+  const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/\s+/g, "");
+  const fwId = norm(frameworkId);
+  const fwName = norm(frameworkName);
+  const matches = defs.filter((d) => {
+    const tag = norm(d.frameworkTag);
+    const fwOk = !tag || tag === "all" || tag === fwId || tag === fwName;
+    const catOk = !d.controlCategory || d.controlCategory === taskCategory;
+    return fwOk && catOk;
+  });
+  if (matches.length === 0) return null;
+  return matches.reduce((best, d) =>
+    (PRIORITY_RANK[d.priority] ?? 9) < (PRIORITY_RANK[best.priority] ?? 9) ? d : best,
+  );
+}
+
 export interface KpiData {
+  kpiDefinitions: KpiDefinition[];
   // ISO 31000
   boardOversightFrequencyPct: number | null;  // % of meetings with risk agenda item (12-month rolling)
   totalBoardMeetings: number;
@@ -670,7 +749,7 @@ export async function getKpiData(): Promise<KpiData | null> {
   const { data: latestSession } = await admin.from("assessment_sessions")
     .select("id").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle();
 
-  const [boardResult, riskEntriesResult, maturityResult, incidentsResult, orgResult] = await Promise.all([
+  const [boardResult, riskEntriesResult, maturityResult, incidentsResult, orgResult, kpiDefsResult] = await Promise.all([
     admin.from("board_meetings").select("risk_agenda_item").eq("user_id", userId).gte("meeting_date", twelveMonthsAgo.toISOString().slice(0, 10)),
     admin.from("risk_register_entries").select("id, probability_band, impact_direct, impact_regulatory, impact_recovery, framework_tags").eq("user_id", userId),
     latestSession
@@ -678,7 +757,19 @@ export async function getKpiData(): Promise<KpiData | null> {
       : Promise.resolve({ data: [] as { maturity_level: number }[], error: null }),
     admin.from("security_incidents").select("severity, occurred_at, detected_at").eq("user_id", userId).not("detected_at", "is", null),
     admin.from("organizations").select("*").eq("user_id", userId).maybeSingle(),
+    admin.from("kpi_definitions").select("*").eq("user_id", userId).order("created_at", { ascending: true }),
   ]);
+
+  const kpiDefinitions: KpiDefinition[] = (kpiDefsResult.data ?? []).map((d) => ({
+    id: d.id,
+    name: d.name,
+    frameworkTag: d.framework_tag ?? null,
+    controlCategory: (d.control_category ?? null) as KpiDefinition["controlCategory"],
+    priority: (d.priority ?? "medium") as KpiDefinition["priority"],
+    executiveOwner: d.executive_owner ?? null,
+    target: d.target ?? null,
+    description: d.description ?? null,
+  }));
 
   const meetings = boardResult.data ?? [];
   const totalBoardMeetings = meetings.length;
@@ -720,6 +811,7 @@ export async function getKpiData(): Promise<KpiData | null> {
   }
 
   return {
+    kpiDefinitions,
     boardOversightFrequencyPct,
     totalBoardMeetings,
     riskInclusiveMeetings,
@@ -808,6 +900,10 @@ export interface RoadmapTask {
   status: string;
   category: string;
   dueDate: string | null;
+  source: "questionnaire" | "scan";
+  // The highest-priority KPI this task's fix unblocks (null if none matches).
+  // Used as a tiebreaker in roadmap ordering within each severity tier.
+  kpi: { name: string; priority: string; owner: string | null } | null;
 }
 
 export interface ActionPlanData {
@@ -825,28 +921,63 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
 
   const { data: session } = await admin
     .from("assessment_sessions")
-    .select("id")
+    .select("id, framework_id")
     .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  const [roadmapResult, riskResult] = await Promise.all([
-    admin.from("remediation_roadmap").select("id, title, description, priority, effort, status, category, due_date").eq("user_id", userId).order("priority_rank").order("created_at", { ascending: false }),
+  const [roadmapResult, riskResult, frameworkResult, kpiDefsResult] = await Promise.all([
+    // select("*") so the new `source` column is read without naming it (PostgREST
+    // schema-cache-proof — same pattern used elsewhere for freshly-added columns).
+    admin.from("remediation_roadmap").select("*").eq("user_id", userId),
     session ? admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle() : Promise.resolve({ data: null }),
+    session?.framework_id ? admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle() : Promise.resolve({ data: null }),
+    admin.from("kpi_definitions").select("*").eq("user_id", userId),
   ]);
 
-  return {
-    tasks: (roadmapResult.data ?? []).map((t) => ({
+  const kpiDefs: KpiDefinition[] = (kpiDefsResult.data ?? []).map((d) => ({
+    id: d.id, name: d.name,
+    frameworkTag: d.framework_tag ?? null,
+    controlCategory: (d.control_category ?? null) as KpiDefinition["controlCategory"],
+    priority: (d.priority ?? "medium") as KpiDefinition["priority"],
+    executiveOwner: d.executive_owner ?? null,
+    target: d.target ?? null,
+    description: d.description ?? null,
+  }));
+  const frameworkId = session?.framework_id ?? null;
+  const frameworkName = (frameworkResult.data as { name?: string } | null)?.name ?? null;
+
+  // Enrich each task with its matched KPI, then order by finding severity first
+  // and linked-KPI priority as the tiebreaker within a severity tier (the CEO-
+  // confirmed "KPI as tiebreaker" weighting), newest first on a full tie.
+  const enriched = (roadmapResult.data ?? []).map((t) => {
+    const priority = t.priority ?? "medium";
+    const category = t.category ?? "administrative";
+    const match = matchKpiForTask(kpiDefs, category, frameworkId, frameworkName);
+    const task: RoadmapTask = {
       id: t.id,
       title: t.title,
       description: t.description ?? null,
-      priority: t.priority ?? "medium",
+      priority,
       effort: t.effort ?? "medium",
       status: t.status ?? "open",
-      category: t.category ?? "administrative",
+      category,
       dueDate: t.due_date ?? null,
-    })),
+      source: ((t as { source?: string }).source === "scan" ? "scan" : "questionnaire") as "questionnaire" | "scan",
+      kpi: match ? { name: match.name, priority: match.priority, owner: match.executiveOwner } : null,
+    };
+    return {
+      task,
+      severityRank: PRIORITY_RANK[priority] ?? 4,
+      kpiRank: match ? (PRIORITY_RANK[match.priority] ?? 4) : 4,
+      createdAt: (t.created_at as string | null) ?? "",
+    };
+  });
+  enriched.sort((a, b) => a.severityRank - b.severityRank || a.kpiRank - b.kpiRank || b.createdAt.localeCompare(a.createdAt));
+
+  return {
+    tasks: enriched.map((e) => e.task),
     riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
     riskBand: riskResult.data?.risk_band ?? "unknown",
     role: ctx.role,
@@ -897,6 +1028,14 @@ export interface RiskRegisterData {
   roiOfTreatmentPct: number | null;
   departmentExposure: DepartmentExposure[];
   toleranceThreshold: number;
+  // Smart default for a new risk's direct financial impact, derived from the
+  // org's data profile (records × per-record breach cost). Editable, not locked.
+  impactSuggestion: {
+    perRecordRate: number;
+    basis: string;
+    recordsAtRisk: number;
+    suggestedDirect: number;
+  } | null;
   role: "admin" | "viewer";
 }
 
@@ -977,6 +1116,22 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
   }
   const departmentExposure = Array.from(deptMap.values()).sort((a, b) => b.exposure - a.exposure);
 
+  // Suggested direct impact for a new risk: records at risk × per-record breach
+  // cost (IBM 2024 rates), scoped by the org's exposed-record share. Same basis
+  // as the dashboard breach-exposure strip. Null when we can't infer a record
+  // count (e.g. physical risks) — the field just starts blank in that case.
+  const o = (orgRow ?? {}) as Record<string, unknown>;
+  const hasHealth = Boolean(o.has_health_data);
+  const hasFinancial = Boolean(o.has_financial_data);
+  const perRecordRate = hasHealth ? 10.93 : hasFinancial ? 5.85 : 4.35;
+  const basis = hasHealth ? "health record" : hasFinancial ? "financial record" : "general PII record";
+  const records = Number(o.patient_records_count ?? 0);
+  const sharePct = Number(o.vendor_data_share_pct ?? 0);
+  const recordsAtRisk = records > 0 ? Math.round(records * (sharePct > 0 ? sharePct / 100 : 1)) : 0;
+  const impactSuggestion = recordsAtRisk > 0
+    ? { perRecordRate, basis, recordsAtRisk, suggestedDirect: Math.round(recordsAtRisk * perRecordRate) }
+    : null;
+
   return {
     entries,
     totalExposure,
@@ -985,6 +1140,7 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
     roiOfTreatmentPct,
     departmentExposure,
     toleranceThreshold,
+    impactSuggestion,
     role: ctx.role,
   };
 }

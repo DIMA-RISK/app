@@ -2586,3 +2586,74 @@ BEGIN
     label          = EXCLUDED.label,
     calculated_at  = NOW();
 END; $$;
+
+
+-- =====================
+-- ADDENDUM 18: Action Plan pulls from BOTH questionnaire answers AND network-scan
+-- findings (EWNAF spec §2/§4 — one action pipeline, not two silos).
+-- Adds `source` (origin of the task) and `finding_id` (external scan finding id,
+-- used to dedupe scan tasks on rescan) to remediation_roadmap.
+-- Existing rows default to 'questionnaire'. Run this block in the Supabase SQL Editor.
+-- =====================
+ALTER TABLE remediation_roadmap
+  ADD COLUMN IF NOT EXISTS source     TEXT DEFAULT 'questionnaire'
+    CHECK (source IN ('questionnaire', 'scan')),
+  ADD COLUMN IF NOT EXISTS finding_id TEXT;
+
+-- Backfill any pre-existing rows explicitly (older rows may have NULL source).
+UPDATE remediation_roadmap SET source = 'questionnaire' WHERE source IS NULL;
+
+-- One scan finding → at most one roadmap row per session. Enables the
+-- upsert(onConflict: 'session_id,finding_id') the app uses so a rescan updates
+-- in place and preserves any in-progress/resolved status the user set.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_roadmap_session_finding'
+  ) THEN
+    ALTER TABLE remediation_roadmap
+      ADD CONSTRAINT uq_roadmap_session_finding UNIQUE (session_id, finding_id);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_roadmap_source ON remediation_roadmap(source);
+
+-- Refresh PostgREST's schema cache so the new columns are queryable immediately.
+NOTIFY pgrst, 'reload schema';
+
+
+-- =====================
+-- ADDENDUM 19: kpi_definitions — manual KPIs that drive roadmap prioritization.
+-- Each KPI carries a priority-of-implementation and an executive owner, and is
+-- scoped by framework_tag + control_category. A remediation task inherits the
+-- HIGHEST-priority KPI matching its framework and category; roadmap sort then
+-- uses that KPI priority as a TIEBREAKER within each severity tier (finding
+-- severity still leads). Ref: DIMA_New_Requirement_KPI_Roadmap_Prioritization §1.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE TABLE IF NOT EXISTS kpi_definitions (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name             TEXT NOT NULL,
+  -- NULL or 'all' = applies to every framework; otherwise matched (case-insensitive)
+  -- against the org's assessment framework id/name (e.g. 'hipaa'/'HIPAA').
+  framework_tag    TEXT,
+  -- NULL = every control category; otherwise the task category it governs.
+  control_category TEXT CHECK (control_category IN ('technical','administrative','physical')),
+  priority         TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('critical','high','medium','low')),
+  executive_owner  TEXT,
+  target           TEXT,
+  description      TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  updated_at       TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE kpi_definitions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "own kpi_definitions" ON kpi_definitions
+  FOR ALL USING (user_id = auth.uid());
+
+CREATE INDEX IF NOT EXISTS idx_kpi_definitions_user ON kpi_definitions(user_id);
+
+-- Refresh PostgREST's schema cache so the new table is queryable immediately.
+NOTIFY pgrst, 'reload schema';

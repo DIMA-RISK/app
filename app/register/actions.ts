@@ -6,7 +6,6 @@ interface OrgMetadata {
   org_name?: string;
   p_number?: string;
   industry?: string;
-  address?: string;
   org_country?: string;
   dba_name?: string;
   org_ip?: string;
@@ -40,7 +39,6 @@ export async function completeOrgRegistration(userId: string): Promise<{ error?:
     email: userResult.user.email ?? "",
     p_number: meta.p_number,
     industry: meta.industry,
-    address: meta.address,
     org_country: meta.org_country,
     dba_name: meta.dba_name || null,
     org_ip: meta.org_ip || null,

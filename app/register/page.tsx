@@ -95,7 +95,6 @@ function RegisterForm() {
           org_name: data.get("organizationName") as string,
           p_number: data.get("organizationPhone") as string,
           industry: data.get("industry") as string,
-          address: data.get("address") as string,
           org_country: selectedCountry.value,
           dba_name: data.get("adminName") as string,
           org_ip: data.get("orgIp") as string,
@@ -200,12 +199,6 @@ function RegisterForm() {
                   <option value="Fintech">Fintech</option>
                   <option value="Finance">Finance</option>
                 </select>
-              </div>
-
-              <div className={`${styles.field} ${styles.fullWidth}`}>
-                <label className={styles.label} htmlFor="address">Address</label>
-                <textarea id="address" name="address" className={styles.textarea}
-                  placeholder="123 Business Avenue, Suite 400" required />
               </div>
 
               <div className={`${styles.field} ${styles.fullWidth}`}>

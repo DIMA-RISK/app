@@ -8,6 +8,7 @@ import {
   createRiskEntry, updateRiskEntry, deleteRiskEntry, saveRiskTolerance,
   type RiskEntryInput, type RiskCategory, type ProbabilityBand, type TreatmentStatus,
 } from "./actions";
+import { SeverityBadge } from "../_components/SeverityBadge";
 import styles from "../dashboard.module.css";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -15,7 +16,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   compliance: "Compliance", technology: "Technology", reputational: "Reputational",
 };
 const PROBABILITY_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
-const PROBABILITY_COLOR: Record<string, string> = { low: "#22c55e", medium: "#f59e0b", high: "#f97316", critical: "#ef4444" };
 const PROBABILITY_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
 const STATUS_LABELS: Record<string, string> = { untreated: "Untreated", in_progress: "In Progress", done: "Done" };
 const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "COSO", "PIPEDA", "HIPAA", "GDPR"];
@@ -54,16 +54,20 @@ function exportCsv(entries: RiskRegisterEntry[]) {
 }
 
 function EntryModal({
-  entry, onClose, onSaved,
+  entry, suggestion, onClose, onSaved,
 }: {
   entry: RiskRegisterEntry | null;
+  suggestion: RiskRegisterData["impactSuggestion"];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [title, setTitle] = useState(entry?.title ?? "");
   const [category, setCategory] = useState<RiskCategory>((entry?.category as RiskCategory) ?? "operational");
   const [probabilityBand, setProbabilityBand] = useState<ProbabilityBand>(entry?.probabilityBand ?? "medium");
-  const [impactDirect, setImpactDirect] = useState(entry?.impactDirect ?? 0);
+  // New risks pre-fill Direct with the org-derived suggestion (records × per-record
+  // cost); editing an existing risk keeps its saved value. Always overridable.
+  const [impactDirect, setImpactDirect] = useState(entry?.impactDirect ?? suggestion?.suggestedDirect ?? 0);
+  const [impactPrefilled, setImpactPrefilled] = useState(!entry && !!suggestion);
   const [impactRegulatory, setImpactRegulatory] = useState(entry?.impactRegulatory ?? 0);
   const [impactRecovery, setImpactRecovery] = useState(entry?.impactRecovery ?? 0);
   const [frameworkTags, setFrameworkTags] = useState<string[]>(entry?.frameworkTags ?? []);
@@ -156,10 +160,11 @@ function EntryModal({
           </div>
 
           <p className={styles.fieldLabel} style={{ marginBottom: "0.4rem" }}>Financial impact (CAD)</p>
-          <div className={styles.grid3} style={{ marginBottom: "0.85rem", gap: "0.6rem" }}>
+          <div className={styles.grid3} style={{ marginBottom: impactPrefilled ? "0.35rem" : "0.85rem", gap: "0.6rem" }}>
             <div className={styles.field}>
               <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Direct</label>
-              <input type="number" min={0} className={styles.fieldInput} value={impactDirect} onChange={(e) => setImpactDirect(Number(e.target.value))} />
+              <input type="number" min={0} className={styles.fieldInput} value={impactDirect}
+                onChange={(e) => { setImpactDirect(Number(e.target.value)); setImpactPrefilled(false); }} />
             </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Regulatory</label>
@@ -170,6 +175,14 @@ function EntryModal({
               <input type="number" min={0} className={styles.fieldInput} value={impactRecovery} onChange={(e) => setImpactRecovery(Number(e.target.value))} />
             </div>
           </div>
+
+          {impactPrefilled && suggestion && (
+            <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)", marginBottom: "0.85rem", lineHeight: 1.5 }}>
+              Suggested Direct impact <strong style={{ color: "#c4a8f0" }}>{fmtCurrency(suggestion.suggestedDirect)}</strong>{" "}
+              ({suggestion.recordsAtRisk.toLocaleString("en-CA")} records × {fmtCurrency(suggestion.perRecordRate)}/{suggestion.basis}, from your data profile).
+              Edit if this risk doesn&rsquo;t apply org-wide.
+            </p>
+          )}
 
           <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
             <label className={styles.fieldLabel}>Framework tags</label>
@@ -298,6 +311,7 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
       {modalEntry !== null && (
         <EntryModal
           entry={modalEntry === "new" ? null : modalEntry}
+          suggestion={data.impactSuggestion}
           onClose={() => setModalEntry(null)}
           onSaved={refresh}
         />
@@ -454,7 +468,7 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
                       ))}
                     </div>
                   </td>
-                  <td><span style={{ color: PROBABILITY_COLOR[e.probabilityBand], fontWeight: 600 }}>{PROBABILITY_LABELS[e.probabilityBand]}</span></td>
+                  <td><SeverityBadge level={e.probabilityBand} title={`Probability: ${PROBABILITY_LABELS[e.probabilityBand]}`} /></td>
                   <td>{fmtCurrency(e.financialImpact)}</td>
                   <td>{fmtCurrency(e.exposure)}</td>
                   <td>

@@ -2,10 +2,124 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
-import type { KpiData } from "../queries";
-import { saveBoardMeeting } from "./actions";
+import { Plus, Trash2, Edit2, X, Target } from "lucide-react";
+import type { KpiData, KpiDefinition } from "../queries";
+import {
+  saveBoardMeeting, createKpiDefinition, updateKpiDefinition, deleteKpiDefinition,
+  type KpiDefinitionInput, type KpiPriority, type ControlCategory,
+} from "./actions";
+import { SeverityBadge } from "../_components/SeverityBadge";
 import styles from "../dashboard.module.css";
+
+// "All frameworks" (null) plus the frameworks the app knows about. Stored value
+// is matched case-insensitively against the org's assessment framework id/name.
+const KPI_FRAMEWORK_OPTIONS = ["All frameworks", "HIPAA", "PIPEDA", "GDPR", "ISO 27001", "ISO 31000", "NIST NRF"];
+const KPI_CATEGORY_OPTIONS: { value: ControlCategory | ""; label: string }[] = [
+  { value: "", label: "All categories" },
+  { value: "technical", label: "Technical" },
+  { value: "administrative", label: "Administrative" },
+  { value: "physical", label: "Physical" },
+];
+const KPI_PRIORITY_OPTIONS: KpiPriority[] = ["critical", "high", "medium", "low"];
+
+function KpiDefinitionModal({ definition, onClose, onSaved }: {
+  definition: KpiDefinition | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(definition?.name ?? "");
+  const [frameworkTag, setFrameworkTag] = useState(definition?.frameworkTag ?? "All frameworks");
+  const [controlCategory, setControlCategory] = useState<ControlCategory | "">(definition?.controlCategory ?? "");
+  const [priority, setPriority] = useState<KpiPriority>(definition?.priority ?? "medium");
+  const [executiveOwner, setExecutiveOwner] = useState(definition?.executiveOwner ?? "");
+  const [target, setTarget] = useState(definition?.target ?? "");
+  const [description, setDescription] = useState(definition?.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const input: KpiDefinitionInput = {
+      name: name.trim(),
+      framework_tag: frameworkTag === "All frameworks" ? null : frameworkTag,
+      control_category: controlCategory || null,
+      priority,
+      executive_owner: executiveOwner.trim() || null,
+      target: target.trim() || null,
+      description: description.trim() || null,
+    };
+    startTransition(async () => {
+      const res = definition ? await updateKpiDefinition(definition.id, input) : await createKpiDefinition(input);
+      if (res.error) { setError(res.error); return; }
+      onSaved();
+      onClose();
+    });
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(10,8,20,0.75)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", overflowY: "auto" }} onClick={onClose}>
+      <div className={styles.card} style={{ width: "100%", maxWidth: 520, margin: "1rem", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter} ${styles.mb1}`}>
+          <h2 className={styles.cardTitleLg}>{definition ? "Edit KPI" : "Define KPI"}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(221,215,234,0.5)", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>KPI name</label>
+            <input className={styles.fieldInput} value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Access Review Completion" />
+          </div>
+          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Priority of implementation</label>
+              <select className={styles.fieldSelect} value={priority} onChange={(e) => setPriority(e.target.value as KpiPriority)}>
+                {KPI_PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Executive owner</label>
+              <input className={styles.fieldInput} value={executiveOwner} onChange={(e) => setExecutiveOwner(e.target.value)} placeholder="e.g. CISO, CEO" />
+            </div>
+          </div>
+          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Framework</label>
+              <select className={styles.fieldSelect} value={frameworkTag} onChange={(e) => setFrameworkTag(e.target.value)}>
+                {KPI_FRAMEWORK_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Control category</label>
+              <select className={styles.fieldSelect} value={controlCategory} onChange={(e) => setControlCategory(e.target.value as ControlCategory | "")}>
+                {KPI_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>Target <span style={{ color: "rgba(221,215,234,0.4)" }}>(optional)</span></label>
+            <input className={styles.fieldInput} value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. ≥95% within 30 days" />
+          </div>
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>Description <span style={{ color: "rgba(221,215,234,0.4)" }}>(optional)</span></label>
+            <input className={styles.fieldInput} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this KPI measures and why it matters" />
+          </div>
+          <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)", marginBottom: "0.85rem", lineHeight: 1.5 }}>
+            Remediation tasks matching this framework + category inherit this KPI. Its priority breaks ties within the same severity tier on the Action Plan.
+          </p>
+          {error && (
+            <div style={{ padding: "0.6rem 0.9rem", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, fontSize: "0.8rem", color: "#f87171", marginBottom: "1rem" }}>{error}</div>
+          )}
+          <div className={`${styles.flex} ${styles.gap08}`} style={{ justifyContent: "flex-end" }}>
+            <button type="button" className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={onClose}>Cancel</button>
+            <button type="submit" className={`${styles.btn} ${styles.btnPrimary} ${styles.btnSm}`} disabled={pending}>
+              {pending ? "Saving…" : definition ? "Save Changes" : "Define KPI"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 // RAG bands per concept manual §3: ≥110% Exceeds (green), 90–110% Meets (lime),
 // 70–89% Below (amber), <70% Critical (red). ragPct = achievement vs target.
@@ -94,7 +208,16 @@ function AddMeetingModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 export default function KpiClient({ data }: { data: KpiData }) {
   const router = useRouter();
   const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [kpiModal, setKpiModal] = useState<KpiDefinition | null | "new">(null);
+  const [deletingKpiId, setDeletingKpiId] = useState<string | null>(null);
   const canEdit = data.role === "admin";
+
+  async function handleDeleteKpi(id: string) {
+    setDeletingKpiId(id);
+    const res = await deleteKpiDefinition(id);
+    if (!res.error) router.refresh();
+    setDeletingKpiId(null);
+  }
 
   const maturityLabels = ["", "Initial", "Developing", "Defined", "Managed", "Optimized"];
 
@@ -114,6 +237,14 @@ export default function KpiClient({ data }: { data: KpiData }) {
         />
       )}
 
+      {kpiModal !== null && (
+        <KpiDefinitionModal
+          definition={kpiModal === "new" ? null : kpiModal}
+          onClose={() => setKpiModal(null)}
+          onSaved={() => router.refresh()}
+        />
+      )}
+
       <div className={styles.pageHeader}>
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>KPI Dashboard</h1>
@@ -128,6 +259,67 @@ export default function KpiClient({ data }: { data: KpiData }) {
             <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`} onClick={() => setShowMeetingModal(true)}>
               <Plus size={14} /> Log Meeting
             </button>
+            <button className={`${styles.btn} ${styles.btnPrimary} ${styles.btnSm}`} onClick={() => setKpiModal("new")}>
+              <Target size={14} /> Define KPI
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* KPI Definitions — manual KPIs that drive roadmap prioritization. Each
+          task inheriting one of these is ranked (within its severity tier) by the
+          KPI's priority-of-implementation. */}
+      <div className={styles.card} style={{ marginBottom: "1.5rem" }}>
+        <div className={styles.cardHeader}>
+          <h2 className={styles.cardTitleLg}>KPI Definitions</h2>
+          <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)" }}>
+            Drive Action Plan ranking — a task blocking a higher-priority KPI surfaces first within its severity tier
+          </span>
+        </div>
+        {data.kpiDefinitions.length === 0 ? (
+          <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.5)", margin: 0 }}>
+            {canEdit
+              ? "No KPIs defined yet. Click \"Define KPI\" to set a priority-of-implementation and executive owner — remediation tasks in the matching framework/category will inherit it and rank accordingly."
+              : "No KPIs defined yet. Ask your admin to define KPIs to drive roadmap prioritization."}
+          </p>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>KPI</th>
+                  <th>Priority</th>
+                  <th>Framework</th>
+                  <th>Category</th>
+                  <th>Owner</th>
+                  <th>Target</th>
+                  {canEdit && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {data.kpiDefinitions.map((k) => (
+                  <tr key={k.id}>
+                    <td>
+                      <div style={{ fontWeight: 500, color: "#ddd7ea" }}>{k.name}</div>
+                      {k.description && <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>{k.description}</div>}
+                    </td>
+                    <td><SeverityBadge level={k.priority} title={`Priority of implementation: ${k.priority}`} /></td>
+                    <td>{k.frameworkTag ?? "All"}</td>
+                    <td>{k.controlCategory ? k.controlCategory.charAt(0).toUpperCase() + k.controlCategory.slice(1) : "All"}</td>
+                    <td>{k.executiveOwner ?? "—"}</td>
+                    <td className={styles.textXs} style={{ color: "rgba(221,215,234,0.55)" }}>{k.target ?? "—"}</td>
+                    {canEdit && (
+                      <td>
+                        <div className={styles.flex} style={{ gap: "0.4rem" }}>
+                          <button onClick={() => setKpiModal(k)} style={{ background: "none", border: "none", color: "#9b7de2", cursor: "pointer" }}><Edit2 size={14} /></button>
+                          <button onClick={() => handleDeleteKpi(k.id)} disabled={deletingKpiId === k.id} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

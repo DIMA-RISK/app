@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { BarChart2, AlertTriangle, CheckCircle2, Clock, Download, RefreshCw, ArrowRight } from "lucide-react";
 import styles from "../dashboard.module.css";
+import { SeverityBadge, LabeledBadge, EFFORT_COLOR } from "./SeverityBadge";
 import type { DashboardData } from "../queries";
 
 const ARC_LENGTH = 251.3;
@@ -202,12 +203,6 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
   const roiRec = data.roi ? roiRecommendation(data.roi.roiPct) : null;
 
   const nextAction = data.tasks[0] ?? null;
-  const nextActionBadgeClass =
-    nextAction?.priority === "critical"
-      ? styles.badgeCritical
-      : nextAction?.priority === "high"
-      ? styles.badgeHigh
-      : styles.badgeMedium;
 
   return (
     <>
@@ -247,7 +242,15 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
 
       {/* Stat Cards */}
       <div className={styles.statGrid}>
-        <div className={styles.statCard}>
+        <div
+          className={styles.statCard}
+          title={
+            data.riskComponents
+              ? `Risk Score = four components, each capped at 25 (EWNAF §4.2):\n• Data Volume: ${data.riskComponents.volume}/25\n• Data Sensitivity: ${data.riskComponents.sensitivity}/25\n• Third-Party Access: ${data.riskComponents.thirdParty}/25\n• Compliance Gap: ${data.riskComponents.complianceGap}/25\nCompliance is only one of four — a high score can coexist with decent compliance.`
+              : undefined
+          }
+          style={{ cursor: data.riskComponents ? "help" : undefined }}
+        >
           <div className={styles.statCardTop}>
             <span className={styles.statCardLabel}>Risk Score</span>
             <div className={`${styles.statCardIcon} ${data.riskBand === "low" ? styles.iconGreen : data.riskBand === "medium" ? styles.iconAmber : styles.iconRed}`}>
@@ -265,6 +268,29 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
               <span>Complete assessment to score</span>
             )}
           </div>
+          {/* Component breakdown so a high score is explained, not left looking
+              contradictory next to a decent compliance %. */}
+          {data.riskComponents && data.riskScore > 0 && (
+            <div style={{ marginTop: "0.6rem", paddingTop: "0.55rem", borderTop: "1px solid rgba(117,76,190,0.12)", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+              {([
+                ["Data Volume", data.riskComponents.volume],
+                ["Data Sensitivity", data.riskComponents.sensitivity],
+                ["Third-Party Access", data.riskComponents.thirdParty],
+                ["Compliance Gap", data.riskComponents.complianceGap],
+              ] as const).map(([label, val]) => {
+                const c = val >= 21 ? "#ef4444" : val >= 15 ? "#f97316" : val >= 9 ? "#eab308" : "#22c55e";
+                return (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ fontSize: "0.62rem", color: "rgba(221,215,234,0.5)", flex: "0 0 6.5rem" }}>{label}</span>
+                    <span style={{ flex: 1, height: 4, background: "rgba(117,76,190,0.12)", borderRadius: 2, overflow: "hidden" }}>
+                      <span style={{ display: "block", height: "100%", width: `${(val / 25) * 100}%`, background: c, borderRadius: 2 }} />
+                    </span>
+                    <span style={{ fontSize: "0.6rem", color: c, fontWeight: 600, flex: "0 0 2.2rem", textAlign: "right" }}>{val}/25</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className={styles.statCard}>
@@ -325,7 +351,13 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitleLg}>Risk Overview</h2>
-            <span className={`${styles.badge} ${riskBadgeClass}`}>{riskBandLabel}</span>
+            <span
+              className={`${styles.badge} ${riskBadgeClass}`}
+              title={`Overall risk band from your risk score of ${data.riskScore}/100 — Low (0–39), Medium (40–59), High (60–79), Critical (80–100). Higher score = higher risk.`}
+              style={{ cursor: "help" }}
+            >
+              {riskBandLabel}
+            </span>
           </div>
 
           <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
@@ -336,9 +368,6 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
           {data.financialExposureMin !== null && data.financialExposureMax !== null && (
             <div
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
                 padding: "0.7rem 0.9rem",
                 background: "rgba(239,68,68,0.05)",
                 border: "1px solid rgba(239,68,68,0.12)",
@@ -346,14 +375,46 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
                 marginBottom: "1rem",
               }}
             >
-              <span style={{ fontSize: "0.78rem", color: "rgba(221,215,234,0.5)" }}>
-                Estimated breach exposure
-              </span>
-              <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "#f87171" }}>
-                {fmtCurrency(data.financialExposureMin, data.currency)} –{" "}
-                {fmtCurrency(data.financialExposureMax, data.currency)}{" "}
-                <span style={{ fontWeight: 400, fontSize: "0.72rem" }}>{data.currency}</span>
-              </span>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span style={{ fontSize: "0.78rem", color: "rgba(221,215,234,0.5)" }}>
+                  Estimated breach exposure{" "}
+                  <span style={{ fontSize: "0.66rem", color: "rgba(221,215,234,0.35)" }}>(total)</span>
+                </span>
+                <span style={{ fontSize: "0.9rem", fontWeight: 700, color: "#f87171" }}>
+                  {fmtCurrency(data.financialExposureMin, data.currency)} –{" "}
+                  {fmtCurrency(data.financialExposureMax, data.currency)}{" "}
+                  <span style={{ fontWeight: 400, fontSize: "0.72rem" }}>{data.currency}</span>
+                </span>
+              </div>
+              {/* Per-record breakdown so the total reads as records × rate, not a
+                  bare lump sum. Only shown when we know how many records are exposed. */}
+              {data.recordsAtRisk !== null && data.recordsAtRisk > 0 && data.perRecordRate !== null && (
+                <div
+                  title={`Based on IBM's per-record cost for a ${data.perRecordBasis} (${fmtCurrency(data.perRecordRate, data.currency)}), applied to the ${data.recordsAtRisk.toLocaleString("en-CA")} sensitive records exposed to third parties.`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: "0.45rem",
+                    paddingTop: "0.45rem",
+                    borderTop: "1px solid rgba(239,68,68,0.1)",
+                    cursor: "help",
+                  }}
+                >
+                  <span style={{ fontSize: "0.68rem", color: "rgba(221,215,234,0.4)" }}>
+                    {data.recordsAtRisk.toLocaleString("en-CA")} records at risk
+                  </span>
+                  <span style={{ fontSize: "0.68rem", color: "rgba(221,215,234,0.5)", fontWeight: 600 }}>
+                    {fmtCurrency(data.perRecordRate, data.currency)}/{data.perRecordBasis}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -689,24 +750,10 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
                   style={{ padding: "0.6rem 0", borderBottom: "1px solid rgba(117,76,190,0.07)" }}
                 >
                   <div className={`${styles.flex} ${styles.gap08} ${styles.itemsCenter}`}>
-                    <span
-                      className={`${styles.badge} ${
-                        task.priority === "critical"
-                          ? styles.badgeCritical
-                          : task.priority === "high"
-                          ? styles.badgeHigh
-                          : task.priority === "medium"
-                          ? styles.badgeMedium
-                          : styles.badgeLow
-                      }`}
-                    >
-                      {task.priority}
-                    </span>
+                    <SeverityBadge level={task.priority} dimension="Priority" />
                     <span className={styles.textSm}>{task.title}</span>
                   </div>
-                  <span className={`${styles.badge} ${styles.badgeGray}`}>
-                    {fmtEffort(task.effort)}
-                  </span>
+                  <LabeledBadge dimension="Effort" value={fmtEffort(task.effort)} color={EFFORT_COLOR[task.effort] ?? "#94a3b8"} />
                 </div>
               ))}
             </div>
@@ -726,12 +773,9 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             <div className={styles.cardHeader}>
               <h2 className={styles.cardTitleLg}>Next Recommended Action</h2>
             </div>
-            <span
-              className={`${styles.badge} ${nextActionBadgeClass}`}
-              style={{ marginBottom: "0.75rem", display: "inline-flex" }}
-            >
-              {nextAction.priority}
-            </span>
+            <div style={{ marginBottom: "0.75rem" }}>
+              <SeverityBadge level={nextAction.priority} dimension="Priority" />
+            </div>
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#ddd7ea", margin: "0.5rem 0" }}>
               {nextAction.title}
             </h3>

@@ -237,6 +237,10 @@ async function regenerateRoadmap(
   sessionId: string,
   frameworkId: string,
 ) {
+  // Scan findings are ingested regardless of whether a questionnaire exists, so
+  // this runs first and unconditionally.
+  await regenerateScanTasks(admin, userId, sessionId);
+
   const { data: allResponses } = await admin
     .from("questionnaire_responses")
     .select("question_id, response")
@@ -247,10 +251,10 @@ async function regenerateRoadmap(
   const failing = allResponses.filter((r) => r.response === "no" || r.response === "partial");
   const passingIds = allResponses.filter((r) => r.response === "yes").map((r) => r.question_id);
 
-  // One-time cleanup of pre-linkage rows (question_id was added later). Going
-  // forward every row is linked to its question, so this is a no-op after the
-  // first run.
-  await admin.from("remediation_roadmap").delete().eq("session_id", sessionId).is("question_id", null);
+  // One-time cleanup of pre-linkage questionnaire orphans (question_id was added
+  // later). Scoped with finding_id IS NULL so scan-sourced rows (which have a
+  // finding_id but no question_id) are never swept up here.
+  await admin.from("remediation_roadmap").delete().eq("session_id", sessionId).is("question_id", null).is("finding_id", null);
 
   if (failing.length > 0) {
     const failedIds = failing.map((r) => r.question_id);
@@ -282,6 +286,7 @@ async function regenerateRoadmap(
         category: "administrative",
         priority: r.response === "no" ? "critical" : "high",
         effort: "medium",
+        source: "questionnaire",
       }];
     });
 
@@ -301,5 +306,80 @@ async function regenerateRoadmap(
       .eq("session_id", sessionId)
       .in("question_id", passingIds)
       .neq("status", "resolved");
+  }
+}
+
+// Shape of a single EWNAF scan finding inside fact_software_results.results.findings[].
+interface ScanFinding {
+  id: string;
+  title?: string;
+  description?: string;
+  severity?: string;
+  host_key?: string;
+  category?: string;
+  confidence?: number;
+}
+
+// EWNAF finding severity → roadmap priority/effort. `info` is the scanner's
+// lowest band; it maps to low priority so it still surfaces as a task.
+const SCAN_PRIORITY: Record<string, string> = { critical: "critical", high: "high", medium: "medium", low: "low", info: "low" };
+const SCAN_EFFORT: Record<string, string> = { critical: "complex", high: "complex", medium: "medium", low: "quick-win", info: "quick-win" };
+
+function humanizeFindingTitle(f: ScanFinding): string {
+  const base = (f.title ?? "Network finding").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return f.host_key ? `${base} — ${f.host_key}` : base;
+}
+
+// Turns the latest network-scan findings into remediation tasks so scan-detected
+// gaps show up in the Action Plan alongside questionnaire gaps (EWNAF spec §2 —
+// scan results and questionnaire answers are one action pipeline, not two silos).
+// Idempotent: upserts on (session_id, finding_id) so a rescan updates in place and
+// preserves any in-progress/resolved status the user set.
+async function regenerateScanTasks(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  sessionId: string,
+) {
+  const { data: org } = await admin
+    .from("organizations")
+    .select("org_uid, id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const orgUid = org?.org_uid ?? org?.id;
+  if (!orgUid) return;
+
+  const { data: scan } = await admin
+    .from("fact_software_results")
+    .select("results")
+    .eq("org_uid", orgUid)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const findings = (scan?.results as { findings?: ScanFinding[] } | null)?.findings;
+  if (!Array.isArray(findings) || findings.length === 0) return;
+
+  const rows = findings
+    .filter((f) => f && f.id)
+    .map((f) => {
+      const sev = (f.severity ?? "low").toLowerCase();
+      const conf = typeof f.confidence === "number" ? ` · confidence ${Math.round(f.confidence * 100)}%` : "";
+      return {
+        session_id: sessionId,
+        user_id: userId,
+        finding_id: f.id,
+        title: humanizeFindingTitle(f),
+        description: `${f.description ?? "Detected by network scan."}${f.host_key ? ` (host ${f.host_key}${conf})` : conf ? ` (${conf.replace(" · ", "")})` : ""}`,
+        category: "technical",
+        priority: SCAN_PRIORITY[sev] ?? "low",
+        effort: SCAN_EFFORT[sev] ?? "medium",
+        source: "scan",
+      };
+    });
+
+  if (rows.length > 0) {
+    // status omitted → defaults 'open' on insert, untouched on conflict so
+    // in-progress/resolved work survives a rescan.
+    await admin.from("remediation_roadmap").upsert(rows, { onConflict: "session_id,finding_id" });
   }
 }
