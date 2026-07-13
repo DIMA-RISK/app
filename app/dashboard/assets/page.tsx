@@ -1,10 +1,139 @@
 import { redirect } from "next/navigation";
-import { getAssetsData } from "../queries";
+import { getAssetsData, type AssetsData, type ScanFindingRow, type DataAssetProcess } from "../queries";
 import { queueScanJob } from "../../onboarding/actions";
+import { SeverityBadge } from "../_components/SeverityBadge";
 import styles from "../dashboard.module.css";
 
 function fmt(n: number) {
   return n.toLocaleString("en-CA", { maximumFractionDigits: 0 });
+}
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+// Per-module ("category") scan scores — the 8-ish modules the audit reports.
+function ModuleScores({ scores }: { scores: AssetsData["categoryScores"] }) {
+  if (scores.length === 0) return null;
+  return (
+    <div className={styles.card} style={{ marginTop: "1.5rem" }}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitleLg}>Scan Module Scores</h2>
+        <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>lower is safer</span>
+      </div>
+      <div className={styles.grid3} style={{ gap: "0.75rem" }}>
+        {scores.map((c) => {
+          const color = c.score <= 10 ? "#22c55e" : c.score <= 30 ? "#84cc16" : c.score <= 60 ? "#f59e0b" : c.score <= 80 ? "#f97316" : "#ef4444";
+          return (
+            <div key={c.category} style={{ background: "rgba(0,2,18,0.35)", border: "1px solid rgba(117,76,190,0.15)", borderRadius: 10, padding: "0.7rem 0.9rem" }}>
+              <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ marginBottom: "0.4rem" }}>
+                <span className={styles.textSm} style={{ color: "#ddd7ea" }}>{c.category}</span>
+                <span style={{ fontWeight: 700, color, fontSize: "0.9rem" }}>{c.score}</span>
+              </div>
+              <div className={styles.progressBar} style={{ height: 5 }}>
+                <div style={{ height: "100%", width: `${Math.min(100, c.score)}%`, background: color, borderRadius: 3 }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Full structured findings list, most severe first.
+function FindingsReport({ findings }: { findings: ScanFindingRow[] }) {
+  if (findings.length === 0) return null;
+  const sorted = [...findings].sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
+  return (
+    <div className={styles.card} style={{ marginTop: "1.5rem" }}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitleLg}>Scan Findings</h2>
+        <span className={`${styles.badge} ${styles.badgePurple}`}>{findings.length}</span>
+      </div>
+      <div className={styles.flexCol} style={{ gap: "0.6rem" }}>
+        {sorted.map((f) => (
+          <div key={f.id} style={{ padding: "0.7rem 0.9rem", background: "rgba(0,2,18,0.35)", border: "1px solid rgba(117,76,190,0.12)", borderRadius: 10 }}>
+            <div className={`${styles.flex} ${styles.justifyBetween} ${styles.itemsCenter}`} style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+              <div className={`${styles.flex} ${styles.itemsCenter}`} style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+                <SeverityBadge level={f.severity} title={`Severity: ${f.severity}`} />
+                <span style={{ fontWeight: 600, color: "#ddd7ea", fontSize: "0.85rem" }}>{f.title}</span>
+                <span className={`${styles.badge} ${styles.badgeGray}`}>{f.category}</span>
+              </div>
+              <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)", fontFamily: "monospace" }}>
+                {f.host}{f.confidence !== null ? ` · ${Math.round(f.confidence * 100)}% conf.` : ""}
+              </div>
+            </div>
+            {f.description && (
+              <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)", margin: "0.4rem 0 0" }}>{f.description}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const VOLUME_LABEL: Record<string, string> = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", very_high: "Very High" };
+const CONTROLLER_LABEL: Record<string, string> = { controller: "Controller", joint_controller: "Joint Controller", processor: "Processor", dont_know: "Unknown" };
+
+// Data/process asset inventory from the GDPR process register.
+function DataAssetInventory({ processes }: { processes: DataAssetProcess[] }) {
+  return (
+    <div className={styles.card} style={{ marginTop: "1.5rem", padding: 0 }}>
+      <div style={{ padding: "0.9rem 1.25rem", borderBottom: "1px solid rgba(117,76,190,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 600, color: "#ddd7ea", fontSize: "0.9rem" }}>Data Asset Inventory</span>
+        <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>from the Process Analysis register</span>
+      </div>
+      {processes.length === 0 ? (
+        <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.5)", padding: "1.25rem" }}>
+          No data/process assets recorded yet. Add processes in the{" "}
+          <a href="/dashboard/gdpr" style={{ color: "#9b7de2" }}>GDPR Assessment</a> → Process Analysis section to build your data inventory.
+        </p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Process</th>
+                <th>Role</th>
+                <th>Data</th>
+                <th>Volume</th>
+                <th>Lawful Basis</th>
+                <th>Transborder</th>
+                <th>Compliant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {processes.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    <div style={{ fontWeight: 500, color: "#ddd7ea" }}>{p.processName}</div>
+                    {p.notes && <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>{p.notes}</div>}
+                  </td>
+                  <td>{p.controllerStatus ? CONTROLLER_LABEL[p.controllerStatus] ?? p.controllerStatus : "—"}</td>
+                  <td>
+                    <div className={styles.flex} style={{ gap: "0.25rem", flexWrap: "wrap" }}>
+                      {p.personalData && <span className={`${styles.badge} ${styles.badgeInfo}`}>PII</span>}
+                      {p.specialCategory && <span className={`${styles.badge} ${styles.badgeHigh}`}>Special</span>}
+                      {p.childrenData && <span className={`${styles.badge} ${styles.badgeMedium}`}>Children</span>}
+                      {!p.personalData && !p.specialCategory && !p.childrenData && "—"}
+                    </div>
+                  </td>
+                  <td>{p.dataVolume ? VOLUME_LABEL[p.dataVolume] ?? p.dataVolume : "—"}</td>
+                  <td className={styles.textSm}>{p.lawfulBasis ?? "—"}</td>
+                  <td className={styles.textSm}>{p.transborder ?? "—"}</td>
+                  <td>
+                    <span className={`${styles.badge} ${p.gdprCompliant === "yes" ? styles.badgeGreen : p.gdprCompliant === "q_yes" ? styles.badgeMedium : styles.badgeCritical}`}>
+                      {p.gdprCompliant === "yes" ? "Yes" : p.gdprCompliant === "q_yes" ? "Qualified" : "No"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function gradeColor(g: string | null) {
@@ -75,6 +204,9 @@ export default async function AssetsPage() {
             </p>
           </div>
         </div>
+
+        {/* Data inventory is independent of the network scan — always show it. */}
+        <DataAssetInventory processes={data?.processes ?? []} />
       </>
     );
   }
@@ -225,6 +357,13 @@ export default async function AssetsPage() {
           )}
         </div>
       )}
+
+      {/* Full scan report: per-module scores + every structured finding. */}
+      <ModuleScores scores={data.categoryScores} />
+      <FindingsReport findings={data.findings} />
+
+      {/* Data/process asset inventory (source for the roadmap's technical findings). */}
+      <DataAssetInventory processes={data.processes} />
     </>
   );
 }

@@ -330,7 +330,6 @@ export interface SettingsData {
   phone: string;
   industry: string;
   country: string;
-  address: string;
   dbaName: string | null;
   orgIp: string | null;
   patientRecords: number;
@@ -344,7 +343,7 @@ export async function getSettingsData(): Promise<SettingsData | null> {
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
-    .select("org_name, email, p_number, industry, org_country, address, dba_name, org_ip, patient_records_count, vendor_count")
+    .select("org_name, email, p_number, industry, org_country, dba_name, org_ip, patient_records_count, vendor_count")
     .eq("user_id", userId)
     .single();
   if (!org) return null;
@@ -354,7 +353,6 @@ export async function getSettingsData(): Promise<SettingsData | null> {
     phone: org.p_number ?? "",
     industry: org.industry ?? "Healthcare",
     country: org.org_country ?? "Canada",
-    address: org.address ?? "",
     dbaName: org.dba_name ?? null,
     orgIp: org.org_ip ?? null,
     patientRecords: org.patient_records_count ?? 0,
@@ -1028,14 +1026,16 @@ export interface RiskRegisterData {
   roiOfTreatmentPct: number | null;
   departmentExposure: DepartmentExposure[];
   toleranceThreshold: number;
-  // Smart default for a new risk's direct financial impact, derived from the
-  // org's data profile (records × per-record breach cost). Editable, not locked.
+  // Smart defaults for a new risk's financial impact, derived from the org's
+  // data profile. Direct = records × per-record breach cost; Regulatory + Recovery
+  // are computed client-side from the risk's framework tags + these fields. All
+  // editable, not locked. Always present (fields may be 0 when no records known).
   impactSuggestion: {
     perRecordRate: number;
     basis: string;
     recordsAtRisk: number;
     suggestedDirect: number;
-  } | null;
+  };
   role: "admin" | "viewer";
 }
 
@@ -1128,9 +1128,7 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
   const records = Number(o.patient_records_count ?? 0);
   const sharePct = Number(o.vendor_data_share_pct ?? 0);
   const recordsAtRisk = records > 0 ? Math.round(records * (sharePct > 0 ? sharePct / 100 : 1)) : 0;
-  const impactSuggestion = recordsAtRisk > 0
-    ? { perRecordRate, basis, recordsAtRisk, suggestedDirect: Math.round(recordsAtRisk * perRecordRate) }
-    : null;
+  const impactSuggestion = { perRecordRate, basis, recordsAtRisk, suggestedDirect: Math.round(recordsAtRisk * perRecordRate) };
 
   return {
     entries,
@@ -1298,6 +1296,30 @@ export async function getDashboardReadiness(): Promise<DashboardReadiness | null
 
 // ─── Assets ───────────────────────────────────────────────────────────────────
 
+export interface ScanFindingRow {
+  id: string;
+  title: string;
+  description: string;
+  severity: string;
+  host: string;
+  category: string;
+  confidence: number | null;
+}
+
+export interface DataAssetProcess {
+  id: string;
+  processName: string;
+  controllerStatus: string | null;
+  personalData: boolean;
+  specialCategory: boolean;
+  childrenData: boolean;
+  lawfulBasis: string | null;
+  dataVolume: string | null;
+  transborder: string | null;
+  gdprCompliant: string | null;
+  notes: string | null;
+}
+
 export interface AssetsData {
   orgIp: string | null;
   auditStatus: string | null;
@@ -1308,6 +1330,11 @@ export interface AssetsData {
   devices: Record<string, unknown>[];
   networkFindings: Record<string, unknown>;
   auditFindings: Record<string, unknown>;
+  // Full structured scan output + per-category ("module") scores.
+  findings: ScanFindingRow[];
+  categoryScores: { category: string; score: number }[];
+  // Data/process asset inventory (GDPR process register) — shown regardless of scan.
+  processes: DataAssetProcess[];
   scannedAt: string | null;
   noScope: boolean;
 }
@@ -1318,14 +1345,30 @@ export async function getAssetsData(): Promise<AssetsData | null> {
   const { userId } = ctx;
   const admin = createAdminClient();
 
-  const { data: org } = await admin
-    .from("organizations")
-    .select("id, org_uid, org_ip")
-    .eq("user_id", userId)
-    .single();
+  const [{ data: org }, { data: processRows }] = await Promise.all([
+    admin.from("organizations").select("id, org_uid, org_ip").eq("user_id", userId).single(),
+    admin.from("gdpr_process_register")
+      .select("id, process_name, controller_status, personal_data, special_category, children_data, lawful_basis, data_volume, transborder, gdpr_compliant, notes")
+      .eq("user_id", userId).order("created_at"),
+  ]);
+
+  const processes: DataAssetProcess[] = (processRows ?? []).map((p) => ({
+    id: p.id,
+    processName: p.process_name,
+    controllerStatus: p.controller_status ?? null,
+    personalData: !!p.personal_data,
+    specialCategory: !!p.special_category,
+    childrenData: !!p.children_data,
+    lawfulBasis: p.lawful_basis ?? null,
+    dataVolume: p.data_volume ?? null,
+    transborder: p.transborder ?? null,
+    gdprCompliant: p.gdpr_compliant ?? null,
+    notes: p.notes ?? null,
+  }));
 
   const orgUid = org?.org_uid ?? org?.id ?? null;
-  if (!orgUid) return { orgIp: org?.org_ip ?? null, auditStatus: null, globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  const emptyScan = { globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, findings: [], categoryScores: [], processes };
+  if (!orgUid) return { orgIp: org?.org_ip ?? null, auditStatus: null, ...emptyScan, scannedAt: null, noScope: true };
 
   const { data: scan } = await admin
     .from("fact_software_results")
@@ -1337,8 +1380,8 @@ export async function getAssetsData(): Promise<AssetsData | null> {
 
   const orgIp = org?.org_ip ?? null;
   // Row exists but results not yet written — scan is still processing
-  if (scan && !scan.results) return { orgIp, auditStatus: "PENDING", globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: scan.created_at ?? null, noScope: true };
-  if (!scan?.results) return { orgIp, auditStatus: null, globalScore: 0, highRiskCount: 0, defenseLevel: null, overallGrade: null, devices: [], networkFindings: {}, auditFindings: {}, scannedAt: null, noScope: true };
+  if (scan && !scan.results) return { orgIp, auditStatus: "PENDING", ...emptyScan, scannedAt: scan.created_at ?? null, noScope: true };
+  if (!scan?.results) return { orgIp, auditStatus: null, ...emptyScan, scannedAt: null, noScope: true };
 
   const r = scan.results as Record<string, unknown>;
   const score = (r.score ?? {}) as Record<string, unknown>;
@@ -1382,6 +1425,27 @@ export async function getAssetsData(): Promise<AssetsData | null> {
   if (Array.isArray(topology.dns) && (topology.dns as string[]).length > 0) networkFindings["DNS"] = (topology.dns as string[]).join(", ");
   if (r.security_level) networkFindings["Scan Policy"] = r.security_level;
 
+  // Full structured findings list (title/severity/host/description/confidence).
+  const rawFindings = Array.isArray(r.findings) ? (r.findings as Record<string, unknown>[]) : [];
+  const findings: ScanFindingRow[] = rawFindings
+    .filter((f) => f && f.id)
+    .map((f) => ({
+      id: String(f.id),
+      title: humanizeLabel(String(f.title ?? "Finding")),
+      description: String(f.description ?? ""),
+      severity: String(f.severity ?? "info").toLowerCase(),
+      host: String(f.host_key ?? ""),
+      category: String(f.category ?? "general"),
+      confidence: typeof f.confidence === "number" ? f.confidence : null,
+    }));
+
+  // Per-category ("module") scores from score.by_category.
+  const byCategory = (score.by_category ?? {}) as Record<string, unknown>;
+  const categoryScores = Object.entries(byCategory).map(([category, s]) => ({
+    category: humanizeLabel(category),
+    score: Number(s ?? 0),
+  }));
+
   return {
     orgIp,
     auditStatus: null,
@@ -1392,9 +1456,17 @@ export async function getAssetsData(): Promise<AssetsData | null> {
     devices,
     networkFindings,
     auditFindings: {},
+    findings,
+    categoryScores,
+    processes,
     scannedAt: (r.ended_at as string) ?? scan.created_at ?? null,
     noScope: false,
   };
+}
+
+// Turn snake/kebab machine labels ("missing_reverse_dns") into readable text.
+function humanizeLabel(s: string): string {
+  return s.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

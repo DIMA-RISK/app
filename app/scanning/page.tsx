@@ -21,19 +21,17 @@ const SCAN_PHASES = [
 export default function ScanningPage() {
   const router = useRouter();
   const [phase, setPhase] = useState(SCAN_PHASES[0]);
-  const [phaseIndex, setPhaseIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const progressRef = useRef(0);
+  const phaseIndexRef = useRef(0);
 
   useEffect(() => {
     // Advance phase message every 8 seconds
     const phaseInterval = setInterval(() => {
-      setPhaseIndex((prev) => {
-        const next = Math.min(prev + 1, SCAN_PHASES.length - 1);
-        setPhase(SCAN_PHASES[next]);
-        return next;
-      });
+      const next = Math.min(phaseIndexRef.current + 1, SCAN_PHASES.length - 1);
+      phaseIndexRef.current = next;
+      setPhase(SCAN_PHASES[next]);
     }, 8000);
 
     // Smoothly advance progress bar (never reaches 100 until scan is confirmed done)
@@ -103,15 +101,22 @@ export default function ScanningPage() {
         </div>
 
         <div className={styles.findings}>
-          {SCAN_CHECKS.map((check, i) => (
-            <div
-              key={check}
-              className={`${styles.findingRow} ${phaseIndex > i ? styles.findingDone : phaseIndex === i ? styles.findingActive : ""}`}
-            >
-              <span className={styles.findingDot} />
-              <span className={styles.findingLabel}>{check}</span>
-            </div>
-          ))}
+          {SCAN_CHECKS.map((check, i) => {
+            // Tie each check's state to the progress bar, not the slow phase
+            // timer — the scan often completes before the timer climbs, which
+            // previously left every step after the first unlit. When done, all
+            // steps read complete.
+            const completedSteps = done
+              ? SCAN_CHECKS.length
+              : Math.min(SCAN_CHECKS.length - 1, Math.floor((progress / 100) * SCAN_CHECKS.length));
+            const state = i < completedSteps ? styles.findingDone : i === completedSteps ? styles.findingActive : "";
+            return (
+              <div key={check} className={`${styles.findingRow} ${state}`}>
+                <span className={styles.findingDot} />
+                <span className={styles.findingLabel}>{check}</span>
+              </div>
+            );
+          })}
         </div>
 
         <p className={styles.note}>

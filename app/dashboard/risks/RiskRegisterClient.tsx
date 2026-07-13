@@ -18,7 +18,23 @@ const CATEGORY_LABELS: Record<string, string> = {
 const PROBABILITY_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
 const PROBABILITY_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
 const STATUS_LABELS: Record<string, string> = { untreated: "Untreated", in_progress: "In Progress", done: "Done" };
-const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "COSO", "PIPEDA", "HIPAA", "GDPR"];
+const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "PIPEDA", "HIPAA", "GDPR"];
+
+// Flat statutory-cap fine tiers (EWNAF spec §4.3) — same ceilings the corrected
+// ROI fine math uses (ADDENDUM 21). Regulatory impact suggestion = the largest
+// applicable ceiling among the risk's tagged frameworks.
+const FRAMEWORK_FINE_TIER: Record<string, number> = { GDPR: 2000000, HIPAA: 1500000, PIPEDA: 100000 };
+function suggestRegulatory(tags: string[]): number {
+  const tiers = tags.map((t) => FRAMEWORK_FINE_TIER[t] ?? 0);
+  return tiers.length > 0 ? Math.max(0, ...tiers) : 0;
+}
+// Recovery = typical incident-response spend (the "beyond the fine" categories):
+// a fixed forensic/legal base + per-record notification & credit-monitoring.
+const RECOVERY_BASE = 50000;          // forensic investigation + legal counsel
+const RECOVERY_PER_RECORD = 2;        // breach notification + credit monitoring
+function suggestRecovery(recordsAtRisk: number): number {
+  return Math.round(RECOVERY_BASE + recordsAtRisk * RECOVERY_PER_RECORD);
+}
 
 function fmtCurrency(n: number) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n);
@@ -61,16 +77,22 @@ function EntryModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const isNew = !entry;
   const [title, setTitle] = useState(entry?.title ?? "");
   const [category, setCategory] = useState<RiskCategory>((entry?.category as RiskCategory) ?? "operational");
   const [probabilityBand, setProbabilityBand] = useState<ProbabilityBand>(entry?.probabilityBand ?? "medium");
-  // New risks pre-fill Direct with the org-derived suggestion (records × per-record
-  // cost); editing an existing risk keeps its saved value. Always overridable.
-  const [impactDirect, setImpactDirect] = useState(entry?.impactDirect ?? suggestion?.suggestedDirect ?? 0);
-  const [impactPrefilled, setImpactPrefilled] = useState(!entry && !!suggestion);
-  const [impactRegulatory, setImpactRegulatory] = useState(entry?.impactRegulatory ?? 0);
-  const [impactRecovery, setImpactRecovery] = useState(entry?.impactRecovery ?? 0);
   const [frameworkTags, setFrameworkTags] = useState<string[]>(entry?.frameworkTags ?? []);
+  // New risks pre-fill all three impact sub-fields with editable smart defaults;
+  // editing an existing risk keeps its saved values. Each field tracks whether it
+  // still holds the suggestion, so touching one clears only its own note and
+  // freezes it against auto-recompute (e.g. changing tags won't overwrite an
+  // edited Regulatory value).
+  const [impactDirect, setImpactDirect] = useState(entry?.impactDirect ?? suggestion.suggestedDirect);
+  const [impactRegulatory, setImpactRegulatory] = useState(entry?.impactRegulatory ?? suggestRegulatory(entry?.frameworkTags ?? []));
+  const [impactRecovery, setImpactRecovery] = useState(entry?.impactRecovery ?? suggestRecovery(suggestion.recordsAtRisk));
+  const [directPrefilled, setDirectPrefilled] = useState(isNew && suggestion.suggestedDirect > 0);
+  const [regPrefilled, setRegPrefilled] = useState(isNew);
+  const [recPrefilled, setRecPrefilled] = useState(isNew);
   const [division, setDivision] = useState(entry?.division ?? "");
   const [owner, setOwner] = useState(entry?.owner ?? "");
   const [treatmentStatus, setTreatmentStatus] = useState<TreatmentStatus>(entry?.treatmentStatus ?? "untreated");
@@ -79,8 +101,16 @@ function EntryModal({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const regSuggestion = suggestRegulatory(frameworkTags);
+
   function toggleFramework(tag: string) {
-    setFrameworkTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+    setFrameworkTags((prev) => {
+      const next = prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag];
+      // Keep the Regulatory suggestion in sync with the tags — but only while the
+      // field still holds the suggestion (untouched by the user).
+      if (regPrefilled) setImpactRegulatory(suggestRegulatory(next));
+      return next;
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -160,28 +190,46 @@ function EntryModal({
           </div>
 
           <p className={styles.fieldLabel} style={{ marginBottom: "0.4rem" }}>Financial impact (CAD)</p>
-          <div className={styles.grid3} style={{ marginBottom: impactPrefilled ? "0.35rem" : "0.85rem", gap: "0.6rem" }}>
+          <div className={styles.grid3} style={{ marginBottom: "0.5rem", gap: "0.6rem" }}>
             <div className={styles.field}>
               <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Direct</label>
               <input type="number" min={0} className={styles.fieldInput} value={impactDirect}
-                onChange={(e) => { setImpactDirect(Number(e.target.value)); setImpactPrefilled(false); }} />
+                onChange={(e) => { setImpactDirect(Number(e.target.value)); setDirectPrefilled(false); }} />
             </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Regulatory</label>
-              <input type="number" min={0} className={styles.fieldInput} value={impactRegulatory} onChange={(e) => setImpactRegulatory(Number(e.target.value))} />
+              <input type="number" min={0} className={styles.fieldInput} value={impactRegulatory}
+                onChange={(e) => { setImpactRegulatory(Number(e.target.value)); setRegPrefilled(false); }} />
             </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} style={{ fontSize: "0.7rem" }}>Recovery</label>
-              <input type="number" min={0} className={styles.fieldInput} value={impactRecovery} onChange={(e) => setImpactRecovery(Number(e.target.value))} />
+              <input type="number" min={0} className={styles.fieldInput} value={impactRecovery}
+                onChange={(e) => { setImpactRecovery(Number(e.target.value)); setRecPrefilled(false); }} />
             </div>
           </div>
 
-          {impactPrefilled && suggestion && (
-            <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)", marginBottom: "0.85rem", lineHeight: 1.5 }}>
-              Suggested Direct impact <strong style={{ color: "#c4a8f0" }}>{fmtCurrency(suggestion.suggestedDirect)}</strong>{" "}
-              ({suggestion.recordsAtRisk.toLocaleString("en-CA")} records × {fmtCurrency(suggestion.perRecordRate)}/{suggestion.basis}, from your data profile).
-              Edit if this risk doesn&rsquo;t apply org-wide.
-            </p>
+          {/* Derivation notes for the suggested sub-fields (new risks only, until edited). */}
+          {(directPrefilled || regPrefilled || recPrefilled) && (
+            <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.45)", marginBottom: "0.85rem", lineHeight: 1.6 }}>
+              {directPrefilled && (
+                <div>
+                  <strong style={{ color: "#c4a8f0" }}>Direct {fmtCurrency(suggestion.suggestedDirect)}</strong> — {suggestion.recordsAtRisk.toLocaleString("en-CA")} records × {fmtCurrency(suggestion.perRecordRate)}/{suggestion.basis}, from your data profile.
+                </div>
+              )}
+              {regPrefilled && (
+                <div>
+                  <strong style={{ color: "#c4a8f0" }}>Regulatory {fmtCurrency(regSuggestion)}</strong> — {regSuggestion > 0
+                    ? `worst-case fine ceiling for ${frameworkTags.filter((t) => FRAMEWORK_FINE_TIER[t]).join(", ")}`
+                    : "tag GDPR / HIPAA / PIPEDA below to estimate the fine ceiling"}.
+                </div>
+              )}
+              {recPrefilled && (
+                <div>
+                  <strong style={{ color: "#c4a8f0" }}>Recovery {fmtCurrency(suggestRecovery(suggestion.recordsAtRisk))}</strong> — {fmtCurrency(RECOVERY_BASE)} forensic/legal base + {suggestion.recordsAtRisk.toLocaleString("en-CA")} records × {fmtCurrency(RECOVERY_PER_RECORD)} notification/monitoring.
+                </div>
+              )}
+              <div style={{ marginTop: "0.2rem", opacity: 0.8 }}>Editable — adjust any field if this risk doesn&rsquo;t apply org-wide.</div>
+            </div>
           )}
 
           <div className={styles.field} style={{ marginBottom: "0.85rem" }}>

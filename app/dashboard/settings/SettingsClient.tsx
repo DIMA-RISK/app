@@ -73,10 +73,6 @@ export default function SettingsClient({ data }: { data: SettingsData }) {
                 <label className={styles.fieldLabel}>Email</label>
                 <input className={styles.fieldInput} defaultValue={data.email} />
               </div>
-              <div className={styles.field} style={{ gridColumn: "1 / -1" }}>
-                <label className={styles.fieldLabel}>Address</label>
-                <input className={styles.fieldInput} defaultValue={data.address} />
-              </div>
               {data.orgIp && (
                 <div className={styles.field} style={{ gridColumn: "1 / -1" }}>
                   <label className={styles.fieldLabel}>Scanned IP</label>
