@@ -2,6 +2,11 @@
 
 import { createClient } from "../../utils/supabase/server";
 import { createAdminClient } from "../../utils/supabase/admin";
+import {
+  aroCategoryFor, ARO_LABEL, aleForThreat, orgAle as computeOrgAle,
+  gapExposure as computeGapExposure, priorityScore as computePriorityScore,
+  assetValue as computeAssetValue,
+} from "./_lib/ale";
 
 // ─── Org context ──────────────────────────────────────────────────────────────
 // Resolves which org's data this user should see.
@@ -902,12 +907,27 @@ export interface RoadmapTask {
   // The highest-priority KPI this task's fix unblocks (null if none matches).
   // Used as a tiebreaker in roadmap ordering within each severity tier.
   kpi: { name: string; priority: string; owner: string | null } | null;
+  // Asset owner accountable for the fix + when the row was last touched (spec §4).
+  owner: string | null;
+  ownerEmail: string | null;
+  updatedAt: string | null;
+  // ALE-based quantification (spec Layers 1–3). threat = mapped ARO category;
+  // gapExposure = annual $ exposure this gap represents; priorityScore = the
+  // dollar-driven roadmap sort key. Zero when the org profile can't value it yet.
+  threat: string;
+  gapExposure: number;
+  priorityScore: number;
 }
 
 export interface ActionPlanData {
   tasks: RoadmapTask[];
   riskScore: number;
   riskBand: string;
+  // Org-wide Annualized Loss Exposure across all threat categories, and the
+  // total open gap exposure (Σ gapExposure over open tasks). Currency for display.
+  orgAle: number;
+  openExposure: number;
+  currency: string;
   role: "admin" | "viewer";
 }
 
@@ -925,13 +945,16 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
     .limit(1)
     .maybeSingle();
 
-  const [roadmapResult, riskResult, frameworkResult, kpiDefsResult] = await Promise.all([
+  const [roadmapResult, riskResult, frameworkResult, kpiDefsResult, orgResult, maturityResult, responsesResult] = await Promise.all([
     // select("*") so the new `source` column is read without naming it (PostgREST
     // schema-cache-proof — same pattern used elsewhere for freshly-added columns).
     admin.from("remediation_roadmap").select("*").eq("user_id", userId),
     session ? admin.from("risk_scores").select("total_score, risk_band").eq("session_id", session.id).maybeSingle() : Promise.resolve({ data: null }),
     session?.framework_id ? admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle() : Promise.resolve({ data: null }),
     admin.from("kpi_definitions").select("*").eq("user_id", userId),
+    admin.from("organizations").select("*").eq("user_id", userId).maybeSingle(),
+    session ? admin.from("maturity_scores").select("maturity_level").eq("session_id", session.id) : Promise.resolve({ data: [] as { maturity_level: number }[] }),
+    session ? admin.from("questionnaire_responses").select("response").eq("session_id", session.id) : Promise.resolve({ data: [] as { response: string }[] }),
   ]);
 
   const kpiDefs: KpiDefinition[] = (kpiDefsResult.data ?? []).map((d) => ({
@@ -946,24 +969,57 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
   const frameworkId = session?.framework_id ?? null;
   const frameworkName = (frameworkResult.data as { name?: string } | null)?.name ?? null;
 
-  // Enrich each task with its matched KPI, then order by finding severity first
-  // and linked-KPI priority as the tiebreaker within a severity tier (the CEO-
-  // confirmed "KPI as tiebreaker" weighting), newest first on a full tie.
+  // ── ALE inputs from the org's real profile (spec Layers 1–3) ────────────────
+  const o = (orgResult.data ?? {}) as Record<string, unknown>;
+  const hasHealth = Boolean(o.has_health_data);
+  const hasFinancial = Boolean(o.has_financial_data);
+  const perRecord = hasHealth ? 10.93 : hasFinancial ? 5.85 : 4.35;
+  const records = Number(o.patient_records_count ?? 0);
+  const sharePct = Number(o.vendor_data_share_pct ?? 0);
+  const recordsAtRisk = records > 0 ? Math.round(records * (sharePct > 0 ? sharePct / 100 : 1)) : 0;
+  const assetVal = computeAssetValue(recordsAtRisk, perRecord);
+  const sensLevel = Number(o.data_sensitivity_level ?? 3);
+
+  const maturityLevels = (maturityResult.data ?? []).map((m) => Number(m.maturity_level)).filter((n) => n > 0);
+  const maturityLevel = maturityLevels.length > 0 ? maturityLevels.reduce((s, v) => s + v, 0) / maturityLevels.length : 3;
+
+  const resp = responsesResult.data ?? [];
+  const answered = resp.filter((r) => r.response !== "na").length;
+  const failed = resp.filter((r) => r.response === "no" || r.response === "partial").length;
+  const gapPct = answered > 0 ? (failed / answered) * 100 : 50;
+
+  const orgAleTotal = computeOrgAle(assetVal, sensLevel);
+
+  // Enrich each task with its matched KPI + ALE quantification, then order by
+  // Priority Score (dollar-driven, spec Layer 3) so the highest-$ gaps surface
+  // to the top across all frameworks. Severity then KPI break ties (e.g. when the
+  // org profile can't value a gap yet, so every priority score is 0).
   const enriched = (roadmapResult.data ?? []).map((t) => {
     const priority = t.priority ?? "medium";
     const category = t.category ?? "administrative";
+    const effort = t.effort ?? "medium";
     const match = matchKpiForTask(kpiDefs, category, frameworkId, frameworkName);
+    const threat = aroCategoryFor(t.title ?? "", category);
+    const aleContribution = aleForThreat(assetVal, threat, sensLevel);
+    const gapExposure = Math.round(computeGapExposure(aleContribution, gapPct, sensLevel));
+    const priorityScore = computePriorityScore(aleContribution, gapPct, sensLevel, effort, maturityLevel);
     const task: RoadmapTask = {
       id: t.id,
       title: t.title,
       description: t.description ?? null,
       priority,
-      effort: t.effort ?? "medium",
+      effort,
       status: t.status ?? "open",
       category,
       dueDate: t.due_date ?? null,
       source: ((t as { source?: string }).source === "scan" ? "scan" : "questionnaire") as "questionnaire" | "scan",
       kpi: match ? { name: match.name, priority: match.priority, owner: match.executiveOwner } : null,
+      owner: (t.assigned_to as string | null) ?? null,
+      ownerEmail: ((t as { asset_owner_email?: string | null }).asset_owner_email) ?? null,
+      updatedAt: (t.updated_at as string | null) ?? null,
+      threat: ARO_LABEL[threat],
+      gapExposure,
+      priorityScore: Math.round(priorityScore * 100) / 100,
     };
     return {
       task,
@@ -972,12 +1028,24 @@ export async function getActionPlanData(): Promise<ActionPlanData | null> {
       createdAt: (t.created_at as string | null) ?? "",
     };
   });
-  enriched.sort((a, b) => a.severityRank - b.severityRank || a.kpiRank - b.kpiRank || b.createdAt.localeCompare(a.createdAt));
+  enriched.sort((a, b) =>
+    b.task.priorityScore - a.task.priorityScore ||
+    a.severityRank - b.severityRank ||
+    a.kpiRank - b.kpiRank ||
+    b.createdAt.localeCompare(a.createdAt),
+  );
+
+  const openExposure = enriched
+    .filter((e) => e.task.status !== "resolved")
+    .reduce((sum, e) => sum + e.task.gapExposure, 0);
 
   return {
     tasks: enriched.map((e) => e.task),
     riskScore: Math.round(Number(riskResult.data?.total_score ?? 0)),
     riskBand: riskResult.data?.risk_band ?? "unknown",
+    orgAle: Math.round(orgAleTotal),
+    openExposure: Math.round(openExposure),
+    currency: "CAD",
     role: ctx.role,
   };
 }

@@ -1,0 +1,12 @@
+{
+  "name": "dima-roi-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent test harness that re-derives every DIMA risk/ROI formula and diffs it against the running app's stored output.",
+  "scripts": {
+    "audit": "node harness.mjs audit",
+    "matrix": "node harness.mjs matrix",
+    "start": "node harness.mjs audit"
+  }
+}

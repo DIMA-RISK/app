@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Edit2, X, Target } from "lucide-react";
+import { Plus, Trash2, Edit2, X, Target, BarChart3, LayoutDashboard, ArrowRight } from "lucide-react";
 import type { KpiData, KpiDefinition } from "../queries";
 import {
   saveBoardMeeting, createKpiDefinition, updateKpiDefinition, deleteKpiDefinition,
@@ -205,11 +205,34 @@ function AddMeetingModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
   );
 }
 
+// A manually-defined KPI rendered as a tile (name, priority, owner, target).
+function ManualKpiCard({ k }: { k: KpiDefinition }) {
+  return (
+    <div className={styles.statCard} style={{ cursor: "default" }}>
+      <div className={styles.statCardTop}>
+        <span className={styles.statCardLabel}>{k.name}</span>
+        <SeverityBadge level={k.priority} title={`Priority of implementation: ${k.priority}`} />
+      </div>
+      <div className={styles.statCardValue} style={{ fontSize: "1.1rem", color: "#c4a8f0" }}>
+        {k.target ?? "—"}
+      </div>
+      <div className={styles.statCardSub}>
+        {k.executiveOwner ? `Owner: ${k.executiveOwner}` : "No owner assigned"}
+        {k.controlCategory ? ` · ${k.controlCategory}` : ""}
+      </div>
+      {k.description && (
+        <div className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)", marginTop: "0.35rem" }}>{k.description}</div>
+      )}
+    </div>
+  );
+}
+
 export default function KpiClient({ data }: { data: KpiData }) {
   const router = useRouter();
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [kpiModal, setKpiModal] = useState<KpiDefinition | null | "new">(null);
   const [deletingKpiId, setDeletingKpiId] = useState<string | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
   const canEdit = data.role === "admin";
 
   async function handleDeleteKpi(id: string) {
@@ -221,12 +244,90 @@ export default function KpiClient({ data }: { data: KpiData }) {
 
   const maturityLabels = ["", "Initial", "Developing", "Defined", "Managed", "Optimized"];
 
-  // Framework-tag → KPI surfacing (EWNAF spec 2.2): show a KPI family only when
-  // its framework tag appears on the org's risk entries. When no tags exist yet,
-  // fall back to showing everything so a new org's dashboard isn't blank.
+  // Framework "blocks" (spec §5): show a clickable tile only for frameworks the
+  // org actually uses — those tagged on its risk register, or that have a defined
+  // KPI. Built-in families (ISO 31000, NIST NRF) also appear when tagged, or as a
+  // fallback when nothing is tagged yet. Clicking a block reveals just that
+  // framework's KPIs instead of showing every framework at once.
   const hasTags = data.activeFrameworks.length > 0;
-  const showIso = !hasTags || data.activeFrameworks.includes("ISO 31000");
-  const showNist = !hasTags || data.activeFrameworks.includes("NIST NRF");
+  const isoActive = !hasTags || data.activeFrameworks.includes("ISO 31000");
+  const nistActive = !hasTags || data.activeFrameworks.includes("NIST NRF");
+
+  const manualByFw = new Map<string, KpiDefinition[]>();
+  for (const k of data.kpiDefinitions) {
+    const key = k.frameworkTag || "All Frameworks";
+    manualByFw.set(key, [...(manualByFw.get(key) ?? []), k]);
+  }
+  const crossKpis = manualByFw.get("All Frameworks") ?? []; // apply to every block
+
+  const blockNames: string[] = [];
+  if (isoActive) blockNames.push("ISO 31000");
+  if (nistActive) blockNames.push("NIST NRF");
+  for (const key of manualByFw.keys()) if (key !== "All Frameworks" && !blockNames.includes(key)) blockNames.push(key);
+  if (blockNames.length === 0 && crossKpis.length > 0) blockNames.push("All Frameworks");
+
+  const activeBlock = selectedBlock ?? blockNames[0] ?? "ceo";
+
+  // How many KPIs each block surfaces (built-in cards + its manual KPIs + cross-framework).
+  function blockCount(fw: string): number {
+    const builtin = fw === "ISO 31000" ? 2 : fw === "NIST NRF" ? 3 : 0;
+    const manual = (manualByFw.get(fw) ?? []).length + (fw === "All Frameworks" ? 0 : crossKpis.length);
+    return builtin + manual;
+  }
+
+  const isoCards = (
+    <div className={styles.statGrid}>
+      <KpiCard label="Board Risk Oversight Frequency"
+        value={data.boardOversightFrequencyPct !== null ? String(data.boardOversightFrequencyPct) : null}
+        unit="%" target="≥90% of meetings"
+        description={`${data.riskInclusiveMeetings}/${data.totalBoardMeetings} meetings with risk agenda item`}
+        framework="ISO 31000"
+        ragPct={data.boardOversightFrequencyPct !== null ? (data.boardOversightFrequencyPct / 90) * 100 : null} />
+      <KpiCard label="Risk Appetite Adherence"
+        value={data.riskAppetiteAdherencePct !== null ? String(data.riskAppetiteAdherencePct) : null}
+        unit="%" target="100% (all within tolerance)"
+        description={`${data.outsideAppetiteCount} of ${data.totalRiskEntries} entries exceed appetite`}
+        framework="ISO 31000" ragPct={data.riskAppetiteAdherencePct} />
+    </div>
+  );
+
+  const nistCards = (
+    <div className={styles.statGrid}>
+      <KpiCard label="Control Maturity (avg)"
+        value={data.avgMaturityLevel !== null ? String(data.avgMaturityLevel) : null}
+        unit={data.avgMaturityLevel !== null ? ` — ${maturityLabels[Math.round(data.avgMaturityLevel)] ?? ""}` : ""}
+        target="≥3.0 (Defined)" description="Average maturity level across compliance domains"
+        framework="NIST NRF" ragPct={data.avgMaturityLevel !== null ? (data.avgMaturityLevel / 3.0) * 100 : null} />
+      <KpiCard label="MTTD — Critical Incidents"
+        value={data.mttdCriticalHours !== null ? String(data.mttdCriticalHours) : null}
+        unit="h avg" target="≤4 hours" description="Mean time to detect critical-severity incidents"
+        framework="NIST NRF" ragPct={data.mttdCriticalHours !== null && data.mttdCriticalHours > 0 ? (4 / data.mttdCriticalHours) * 100 : null} />
+      <KpiCard label="MTTD — High Incidents"
+        value={data.mttdHighHours !== null ? String(data.mttdHighHours) : null}
+        unit="h avg" target="≤24 hours" description="Mean time to detect high-severity incidents"
+        framework="NIST NRF" ragPct={data.mttdHighHours !== null && data.mttdHighHours > 0 ? (24 / data.mttdHighHours) * 100 : null} />
+    </div>
+  );
+
+  function renderBlock(fw: string) {
+    const manual = [...(manualByFw.get(fw) ?? []), ...(fw === "All Frameworks" ? [] : crossKpis)];
+    return (
+      <>
+        {fw === "ISO 31000" && isoCards}
+        {fw === "NIST NRF" && nistCards}
+        {manual.length > 0 && (
+          <div className={styles.statGrid} style={{ marginTop: fw === "ISO 31000" || fw === "NIST NRF" ? "1rem" : 0 }}>
+            {manual.map((k) => <ManualKpiCard key={k.id} k={k} />)}
+          </div>
+        )}
+        {blockCount(fw) === 0 && (
+          <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.5)" }}>
+            No KPIs for {fw} yet. {canEdit ? "Use “Define KPI” to add one." : "Ask your admin to define one."}
+          </p>
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -249,9 +350,7 @@ export default function KpiClient({ data }: { data: KpiData }) {
         <div className={styles.pageTitleGroup}>
           <h1 className={styles.pageTitle}>KPI Dashboard</h1>
           <p className={styles.pageSubtitle}>
-            {hasTags
-              ? `Surfaced by your risk register's framework tags: ${data.activeFrameworks.join(", ")}`
-              : "Framework-aware KPIs — tag risk entries (ISO 31000, NIST NRF) to filter this view"}
+            Select a framework to see its KPIs, or open the CEO Dashboard for the rolled-up executive view
           </p>
         </div>
         {canEdit && (
@@ -263,6 +362,90 @@ export default function KpiClient({ data }: { data: KpiData }) {
               <Target size={14} /> Define KPI
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Framework blocks (spec §5): one tile per framework the org uses + a
+          CEO Dashboard tile. Clicking a tile reveals just that block's KPIs. */}
+      <div className={styles.statGrid} style={{ marginBottom: "1.25rem" }}>
+        {blockNames.map((fw) => {
+          const selected = activeBlock === fw;
+          return (
+            <button key={fw} onClick={() => setSelectedBlock(fw)}
+              className={styles.statCard}
+              style={{
+                textAlign: "left", cursor: "pointer", fontFamily: "inherit",
+                borderColor: selected ? "#754cbe" : undefined,
+                boxShadow: selected ? "0 0 0 1px #754cbe" : undefined,
+              }}>
+              <div className={styles.statCardTop}>
+                <span className={styles.statCardLabel}>{fw} KPIs</span>
+                <div className={`${styles.statCardIcon} ${styles.iconPurple}`}><BarChart3 size={16} /></div>
+              </div>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{blockCount(fw)}</div>
+              <div className={styles.statCardSub}>{selected ? "Showing below" : "Click to view"}</div>
+            </button>
+          );
+        })}
+        {/* CEO Dashboard block — always present, not framework-gated. */}
+        <button onClick={() => setSelectedBlock("ceo")}
+          className={styles.statCard}
+          style={{
+            textAlign: "left", cursor: "pointer", fontFamily: "inherit",
+            borderColor: activeBlock === "ceo" ? "#754cbe" : undefined,
+            boxShadow: activeBlock === "ceo" ? "0 0 0 1px #754cbe" : undefined,
+            background: "linear-gradient(135deg, #181430 78%, rgba(117,76,190,0.12))",
+          }}>
+          <div className={styles.statCardTop}>
+            <span className={styles.statCardLabel}>CEO Dashboard</span>
+            <div className={`${styles.statCardIcon} ${styles.iconPurple}`}><LayoutDashboard size={16} /></div>
+          </div>
+          <div className={styles.statCardValue} style={{ fontSize: "1.1rem", color: "#c4a8f0" }}>Executive view</div>
+          <div className={styles.statCardSub}>Rolled-up risk, appetite & ROI</div>
+        </button>
+      </div>
+
+      {/* Selected block content */}
+      <div className={styles.card} style={{ marginBottom: "1.5rem" }}>
+        {activeBlock === "ceo" ? (
+          <>
+            <div className={styles.cardHeader}>
+              <h2 className={styles.cardTitleLg}>CEO Dashboard</h2>
+              <button className={`${styles.btn} ${styles.btnPrimary} ${styles.btnSm}`} onClick={() => router.push("/dashboard")}>
+                Open Executive Summary <ArrowRight size={14} />
+              </button>
+            </div>
+            <div className={styles.statGrid}>
+              <div className={styles.statCard} style={{ cursor: "default" }}>
+                <div className={styles.statCardTop}><span className={styles.statCardLabel}>Risk Appetite Adherence</span></div>
+                <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{data.riskAppetiteAdherencePct ?? "—"}{data.riskAppetiteAdherencePct != null ? "%" : ""}</div>
+                <div className={styles.statCardSub}>{data.outsideAppetiteCount} of {data.totalRiskEntries} entries outside appetite</div>
+              </div>
+              <div className={styles.statCard} style={{ cursor: "default" }}>
+                <div className={styles.statCardTop}><span className={styles.statCardLabel}>Board Oversight</span></div>
+                <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{data.boardOversightFrequencyPct ?? "—"}{data.boardOversightFrequencyPct != null ? "%" : ""}</div>
+                <div className={styles.statCardSub}>{data.riskInclusiveMeetings}/{data.totalBoardMeetings} meetings with risk agenda</div>
+              </div>
+              <div className={styles.statCard} style={{ cursor: "default" }}>
+                <div className={styles.statCardTop}><span className={styles.statCardLabel}>Control Maturity</span></div>
+                <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{data.avgMaturityLevel ?? "—"}</div>
+                <div className={styles.statCardSub}>avg across domains</div>
+              </div>
+              <div className={styles.statCard} style={{ cursor: "default" }}>
+                <div className={styles.statCardTop}><span className={styles.statCardLabel}>Defined KPIs</span></div>
+                <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{data.kpiDefinitions.length}</div>
+                <div className={styles.statCardSub}>{blockNames.length} framework block{blockNames.length !== 1 ? "s" : ""}</div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className={styles.cardHeader}>
+              <h2 className={styles.cardTitleLg}>{activeBlock} KPIs</h2>
+              <span className={`${styles.badge} ${styles.badgePurple}`}>{blockCount(activeBlock)}</span>
+            </div>
+            {renderBlock(activeBlock)}
+          </>
         )}
       </div>
 
@@ -323,79 +506,6 @@ export default function KpiClient({ data }: { data: KpiData }) {
           </div>
         )}
       </div>
-
-      {/* ISO 31000 KPIs — surfaced when an entry is tagged ISO 31000 */}
-      {showIso && (
-        <>
-          <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>ISO 31000 — Leadership & Appetite</p>
-          <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
-            <KpiCard
-              label="Board Risk Oversight Frequency"
-              value={data.boardOversightFrequencyPct !== null ? String(data.boardOversightFrequencyPct) : null}
-              unit="%"
-              target="≥90% of meetings"
-              description={`${data.riskInclusiveMeetings}/${data.totalBoardMeetings} meetings with risk agenda item`}
-              framework="ISO 31000"
-              ragPct={data.boardOversightFrequencyPct !== null ? (data.boardOversightFrequencyPct / 90) * 100 : null}
-            />
-            <KpiCard
-              label="Risk Appetite Adherence"
-              value={data.riskAppetiteAdherencePct !== null ? String(data.riskAppetiteAdherencePct) : null}
-              unit="%"
-              target="100% (all within tolerance)"
-              description={`${data.outsideAppetiteCount} of ${data.totalRiskEntries} entries exceed appetite`}
-              framework="ISO 31000"
-              ragPct={data.riskAppetiteAdherencePct}
-            />
-          </div>
-        </>
-      )}
-
-      {/* NIST NRF KPIs — surfaced when an entry is tagged NIST NRF */}
-      {showNist && (
-        <>
-          <p className={styles.sectionLabel} style={{ marginBottom: "0.75rem" }}>NIST NRF — Control Maturity & Detection</p>
-          <div className={styles.statGrid} style={{ marginBottom: "1.5rem" }}>
-            <KpiCard
-              label="Control Maturity (avg)"
-              value={data.avgMaturityLevel !== null ? String(data.avgMaturityLevel) : null}
-              unit={data.avgMaturityLevel !== null ? ` — ${maturityLabels[Math.round(data.avgMaturityLevel)] ?? ""}` : ""}
-              target="≥3.0 (Defined)"
-              description="Average maturity level across compliance domains"
-              framework="NIST NRF"
-              ragPct={data.avgMaturityLevel !== null ? (data.avgMaturityLevel / 3.0) * 100 : null}
-            />
-            <KpiCard
-              label="MTTD — Critical Incidents"
-              value={data.mttdCriticalHours !== null ? String(data.mttdCriticalHours) : null}
-              unit="h avg"
-              target="≤4 hours"
-              description="Mean time to detect critical-severity incidents"
-              framework="NIST NRF"
-              ragPct={data.mttdCriticalHours !== null && data.mttdCriticalHours > 0 ? (4 / data.mttdCriticalHours) * 100 : null}
-            />
-            <KpiCard
-              label="MTTD — High Incidents"
-              value={data.mttdHighHours !== null ? String(data.mttdHighHours) : null}
-              unit="h avg"
-              target="≤24 hours"
-              description="Mean time to detect high-severity incidents"
-              framework="NIST NRF"
-              ragPct={data.mttdHighHours !== null && data.mttdHighHours > 0 ? (24 / data.mttdHighHours) * 100 : null}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Tags present, but none map to a KPI family */}
-      {hasTags && !showIso && !showNist && (
-        <div className={styles.card} style={{ padding: "1.25rem", marginBottom: "1.5rem" }}>
-          <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)", margin: 0 }}>
-            Your risk entries are tagged {data.activeFrameworks.join(", ")}, which don&apos;t have dedicated KPI families yet.
-            Tag an entry <strong>ISO 31000</strong> or <strong>NIST NRF</strong> to surface those KPIs here.
-          </p>
-        </div>
-      )}
 
       {/* Guidance for empty state */}
       {(data.totalBoardMeetings === 0 || data.totalRiskEntries === 0) && (

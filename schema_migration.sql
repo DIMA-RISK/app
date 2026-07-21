@@ -2882,3 +2882,233 @@ BEGIN
     PERFORM calculate_financial_impact(s.id);
   END LOOP;
 END $$;
+
+
+-- =====================
+-- ADDENDUM 22: fix Security Training dominating the ROI investment total.
+-- Training = $250 × employee_count is unbounded, so an inconsistent/mis-entered
+-- headcount (e.g. 50,000 employees on a $9M-revenue org → $12.5M training, 76% of
+-- the whole investment) blows up the ROI. Bound it to the SAME annual-revenue
+-- signal that correctly drives the benefit lines: training can't exceed ~2% of
+-- revenue. Supersedes ADDENDUM 21's function (only the training line changes).
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+CREATE OR REPLACE FUNCTION calculate_financial_impact(p_session_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_user_id         UUID;
+  v_framework_id    TEXT;
+  v_records         BIGINT;
+  v_has_health      BOOLEAN;
+  v_has_financial   BOOLEAN;
+  v_share_pct       NUMERIC;
+  v_failed          INT;
+  v_total           INT;
+  v_gap_pct         NUMERIC;
+  v_records_at_risk NUMERIC;
+  v_per_record      NUMERIC;
+  v_breach_cost     NUMERIC;
+  v_fine_min        NUMERIC;
+  v_fine_max        NUMERIC;
+  v_gdpr_gap        NUMERIC;
+  v_gdpr_fine       NUMERIC;
+  v_revenue         NUMERIC;
+  v_employees       INT;
+  v_business_size   TEXT;
+  v_risk_score      NUMERIC;
+  v_size_mult       NUMERIC;
+  v_tech_infra      NUMERIC;
+  v_prof_services   NUMERIC;
+  v_training        NUMERIC;
+  v_maintenance     NUMERIC;
+  v_investment      NUMERIC;
+  v_breach_avoid    NUMERIC;
+  v_fine_avoid      NUMERIC;
+  v_continuity      NUMERIC;
+  v_reputation      NUMERIC;
+  v_efficiency      NUMERIC;
+  v_insurance       NUMERIC;
+  v_compliance      NUMERIC;
+  v_benefits        NUMERIC;
+  v_net_benefit     NUMERIC;
+  v_roi_pct         NUMERIC;
+  v_payback         NUMERIC;
+  v_investment_breakdown JSONB;
+  v_benefits_breakdown   JSONB;
+BEGIN
+  SELECT s.user_id, s.framework_id
+  INTO   v_user_id, v_framework_id
+  FROM   assessment_sessions s WHERE s.id = p_session_id;
+
+  IF v_user_id IS NULL THEN RETURN; END IF;
+
+  SELECT
+    COALESCE(o.patient_records_count, 0),
+    COALESCE(o.has_health_data, false),
+    COALESCE(o.has_financial_data, false),
+    COALESCE(o.vendor_data_share_pct, 0),
+    o.annual_revenue,
+    o.employee_count,
+    o.business_size
+  INTO v_records, v_has_health, v_has_financial, v_share_pct,
+       v_revenue, v_employees, v_business_size
+  FROM organizations o WHERE o.user_id = v_user_id;
+
+  SELECT
+    COUNT(*) FILTER (WHERE r.response IN ('no', 'partial')),
+    COUNT(*) FILTER (WHERE r.response != 'na')
+  INTO v_failed, v_total
+  FROM questionnaire_responses r WHERE r.session_id = p_session_id;
+
+  v_gap_pct := CASE WHEN v_total > 0 THEN (v_failed::NUMERIC / v_total) * 100 ELSE 50 END;
+
+  v_records_at_risk := v_records * (v_share_pct / 100.0);
+
+  v_per_record := CASE
+    WHEN v_has_health    THEN 10.93
+    WHEN v_has_financial THEN 5.85
+    ELSE 4.35
+  END;
+
+  v_breach_cost := v_records_at_risk * v_per_record;
+
+  -- ── Regulatory fines: FLAT statutory-cap tiers (EWNAF spec §4.3), scaled by
+  -- the non-compliance gap. Caps are the worst-case ceilings, reached only at a
+  -- 100% gap. Deliberately NOT revenue-percentage or real-enforcement figures.
+  --   HIPAA  max $1,500,000   PIPEDA max $100,000   GDPR overlay max $2,000,000
+  IF v_framework_id = 'hipaa' THEN
+    v_fine_max := 1500000 * (v_gap_pct / 100.0);
+  ELSIF v_framework_id = 'pipeda' THEN
+    v_fine_max := 100000 * (v_gap_pct / 100.0);
+  ELSE
+    v_fine_max := 0;
+  END IF;
+
+  -- GDPR overlay (applies globally — org may process EU-resident data), scaled by
+  -- the GDPR critical-control gap (ADDENDUM 11 table), capped at the flat $2M tier.
+  SELECT
+    (COUNT(*) FILTER (WHERE NOT COALESCE(r.present, false)))::NUMERIC
+    / NULLIF(COUNT(*), 0) * 100
+  INTO v_gdpr_gap
+  FROM critical_controls c
+  LEFT JOIN critical_control_responses r ON r.control_id = c.id AND r.user_id = v_user_id
+  WHERE c.framework_id = 'gdpr';
+
+  v_gdpr_gap  := COALESCE(v_gdpr_gap, 100);
+  v_gdpr_fine := 2000000 * (v_gdpr_gap / 100.0);
+
+  v_fine_max := v_fine_max + v_gdpr_fine;
+  v_fine_min := ROUND(v_fine_max * 0.4, 2);  -- conservative lower bound of the range
+
+  -- ROI projection (unchanged logic, just corrected fine inputs flow through)
+  IF v_revenue IS NOT NULL THEN
+    SELECT COALESCE(rs.total_score, 0) INTO v_risk_score
+    FROM risk_scores rs WHERE rs.session_id = p_session_id;
+
+    v_size_mult := CASE v_business_size
+      WHEN 'enterprise' THEN 2.5 WHEN 'large' THEN 1.8 WHEN 'medium' THEN 1.3
+      WHEN 'small' THEN 1.0 WHEN 'micro' THEN 0.7 ELSE 1.0
+    END;
+
+    v_tech_infra    := (35000 + 715000 * (v_risk_score / 100.0)) * v_size_mult;
+    v_prof_services := (20000 + 480000 * (v_risk_score / 100.0)) * v_size_mult;
+    v_training      := 250 * COALESCE(v_employees, 0);
+    -- Bound Security Training to the same revenue signal the benefit lines use.
+    -- An inconsistent/mis-entered headcount (e.g. 50,000 employees for a $9M org)
+    -- otherwise makes this single line dominate the entire investment total.
+    IF v_revenue > 0 THEN
+      v_training := LEAST(v_training, v_revenue * 0.02);
+    END IF;
+    v_maintenance   := 0.15 * (v_tech_infra + v_prof_services) * 3;
+    v_investment    := v_tech_infra + v_prof_services + v_training + v_maintenance;
+
+    v_breach_avoid := v_breach_cost * 0.75;
+    v_fine_avoid   := v_fine_max * 0.85;
+    v_continuity   := v_revenue * 0.015 * 3;
+    v_reputation   := v_revenue * 0.01  * 3;
+    v_efficiency   := v_revenue * 0.005 * 3;
+    v_insurance    := 75000 * (v_size_mult / 2.5);
+    v_compliance   := 75000 + 75000 * (v_risk_score / 100.0);
+    v_benefits     := v_breach_avoid + v_fine_avoid + v_continuity + v_reputation
+                       + v_efficiency + v_insurance + v_compliance;
+
+    v_net_benefit := v_benefits - v_investment;
+    v_roi_pct     := CASE WHEN v_investment > 0 THEN (v_net_benefit / v_investment) * 100 ELSE NULL END;
+    v_payback     := CASE WHEN v_benefits  > 0 THEN v_investment / (v_benefits / 36.0)  ELSE NULL END;
+
+    v_investment_breakdown := jsonb_build_object(
+      'technology_infrastructure', ROUND(v_tech_infra, 2),
+      'professional_services',     ROUND(v_prof_services, 2),
+      'security_training',         ROUND(v_training, 2),
+      'maintenance_operations',    ROUND(v_maintenance, 2)
+    );
+    v_benefits_breakdown := jsonb_build_object(
+      'breach_cost_avoidance',     ROUND(v_breach_avoid, 2),
+      'regulatory_fine_avoidance', ROUND(v_fine_avoid, 2),
+      'business_continuity',       ROUND(v_continuity, 2),
+      'reputation_protection',     ROUND(v_reputation, 2),
+      'operational_efficiency',    ROUND(v_efficiency, 2),
+      'cyber_insurance_discount',  ROUND(v_insurance, 2),
+      'compliance_cost_avoidance', ROUND(v_compliance, 2)
+    );
+  ELSE
+    v_investment := NULL; v_benefits := NULL; v_net_benefit := NULL;
+    v_roi_pct := NULL; v_payback := NULL;
+    v_investment_breakdown := NULL; v_benefits_breakdown := NULL;
+  END IF;
+
+  INSERT INTO financial_impact (
+    session_id, estimated_breach_cost,
+    regulatory_fines_min, regulatory_fines_max,
+    total_exposure_min, total_exposure_max,
+    investment_total, investment_breakdown,
+    benefits_total_3yr, benefits_breakdown,
+    net_benefit_3yr, roi_pct, payback_months
+  ) VALUES (
+    p_session_id,
+    ROUND(v_breach_cost, 2),
+    v_fine_min, v_fine_max,
+    ROUND(v_breach_cost + v_fine_min, 2),
+    ROUND(v_breach_cost + v_fine_max, 2),
+    ROUND(v_investment, 2), v_investment_breakdown,
+    ROUND(v_benefits,   2), v_benefits_breakdown,
+    ROUND(v_net_benefit, 2), ROUND(v_roi_pct, 2), ROUND(v_payback, 1)
+  )
+  ON CONFLICT (session_id) DO UPDATE SET
+    estimated_breach_cost  = EXCLUDED.estimated_breach_cost,
+    regulatory_fines_min   = EXCLUDED.regulatory_fines_min,
+    regulatory_fines_max   = EXCLUDED.regulatory_fines_max,
+    total_exposure_min     = EXCLUDED.total_exposure_min,
+    total_exposure_max     = EXCLUDED.total_exposure_max,
+    investment_total       = EXCLUDED.investment_total,
+    investment_breakdown   = EXCLUDED.investment_breakdown,
+    benefits_total_3yr     = EXCLUDED.benefits_total_3yr,
+    benefits_breakdown     = EXCLUDED.benefits_breakdown,
+    net_benefit_3yr        = EXCLUDED.net_benefit_3yr,
+    roi_pct                = EXCLUDED.roi_pct,
+    payback_months         = EXCLUDED.payback_months,
+    calculated_at          = NOW();
+END; $$;
+
+-- Recompute existing sessions so the corrected training/ROI takes effect now.
+DO $$
+DECLARE s RECORD;
+BEGIN
+  FOR s IN SELECT id FROM assessment_sessions LOOP
+    PERFORM calculate_financial_impact(s.id);
+  END LOOP;
+END $$;
+
+
+-- =====================
+-- ADDENDUM 23: asset-owner escalation on roadmap items (spec §4).
+-- remediation_roadmap already has assigned_to (owner name) and updated_at
+-- (last-update timestamp) — this only adds the owner's email so the one-click
+-- "escalate to owner" action can send a notice via the existing SMTP setup.
+-- Run this block in the Supabase SQL Editor.
+-- =====================
+ALTER TABLE remediation_roadmap
+  ADD COLUMN IF NOT EXISTS asset_owner_email TEXT;
+
+-- Refresh PostgREST's schema cache so the new column is queryable immediately.
+NOTIFY pgrst, 'reload schema';
