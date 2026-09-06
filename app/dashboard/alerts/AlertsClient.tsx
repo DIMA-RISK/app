@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, AlertCircle, Info, CheckCircle2, X, Bell } from "lucide-react";
 import type { AlertItem } from "../queries";
-import { markAlertRead, markAllAlertsRead, dismissAlert } from "./actions";
+import { markAlertRead, markAlertUnread, markAllAlertsRead, dismissAlert } from "./actions";
 import styles from "../dashboard.module.css";
 
 const ALERT_STYLE: Record<string, { borderClass: string; iconColor: string; iconBg: string }> = {
@@ -34,6 +34,11 @@ export default function AlertsClient({ alerts: initial }: { alerts: AlertItem[] 
   const markRead = (id: string) => {
     setAlerts((a) => a.map((al) => al.id === id ? { ...al, read: true } : al));
     markAlertRead(id).then(() => router.refresh());
+  };
+
+  const markUnread = (id: string) => {
+    setAlerts((a) => a.map((al) => al.id === id ? { ...al, read: false } : al));
+    markAlertUnread(id).then(() => router.refresh());
   };
 
   const dismiss = (id: string) => {
@@ -106,9 +111,13 @@ export default function AlertsClient({ alerts: initial }: { alerts: AlertItem[] 
                 </div>
                 <p className={styles.textSm} style={{ color: "rgba(221,215,234,0.6)", marginTop: "0.3rem" }}>{alert.body}</p>
                 <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.4rem" }}>
-                  {!alert.read && (
+                  {!alert.read ? (
                     <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnXs}`} onClick={() => markRead(alert.id)}>
                       Mark read
+                    </button>
+                  ) : (
+                    <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnXs}`} onClick={() => markUnread(alert.id)}>
+                      Mark unread
                     </button>
                   )}
                   <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnXs}`} onClick={() => dismiss(alert.id)}>

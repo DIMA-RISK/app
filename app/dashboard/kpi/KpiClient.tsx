@@ -22,6 +22,21 @@ const KPI_CATEGORY_OPTIONS: { value: ControlCategory | ""; label: string }[] = [
 ];
 const KPI_PRIORITY_OPTIONS: KpiPriority[] = ["critical", "high", "medium", "low"];
 
+// [STARTER SET — pending the CEO's curated KPI list] Suggested KPI names per
+// framework, grounded in the frameworks + the healthcare risk-catalog categories.
+// Rendered as a combobox: users pick a suggestion OR type their own. Extend/replace
+// once Margaret sends her reference list.
+const KPI_NAME_SUGGESTIONS: Record<string, string[]> = {
+  "All frameworks": ["Access Review Completion", "Workforce Training Completion", "Incident Response Readiness", "Vendor Risk Assessment Coverage", "Backup & Recovery Success Rate"],
+  HIPAA: ["Access Review Completion", "MFA Coverage", "Encryption-at-Rest Coverage", "Encryption-in-Transit Coverage", "Audit Log Coverage", "Workforce Training Completion", "BAA Coverage", "Incident Response Readiness", "Breach Notification Timeliness", "Backup & Recovery Success Rate", "Physical Access Control Coverage"],
+  PIPEDA: ["Consent Capture Rate", "Data Retention Compliance", "Access/Correction Request SLA", "Privacy Policy Currency", "Breach Notification Timeliness", "Cross-Border Transfer Controls", "Workforce Privacy Training Completion", "Data Minimization Compliance"],
+  "CA-Health": ["Consent Management Coverage", "Individual Rights Request SLA", "Breach Notification Timeliness", "Data Retention Compliance", "Privacy Policy Currency"],
+  GDPR: ["DSAR Response SLA", "Consent Coverage", "DPIA Completion Rate", "Records of Processing Currency", "72-Hour Breach Notification Compliance"],
+  "ISO 31000": ["Board Risk Oversight Frequency", "Risk Appetite Adherence", "Risk Review Cadence"],
+  "NIST NRF": ["Control Maturity (avg)", "Mean Time to Detect (MTTD)", "Mean Time to Respond (MTTR)", "Continuous Monitoring Coverage"],
+  "ISO 27001": ["Annex A Control Coverage", "Internal Audit Completion", "Nonconformity Closure Rate"],
+};
+
 function KpiDefinitionModal({ definition, onClose, onSaved }: {
   definition: KpiDefinition | null;
   onClose: () => void;
@@ -66,8 +81,11 @@ function KpiDefinitionModal({ definition, onClose, onSaved }: {
         </div>
         <form onSubmit={handleSubmit}>
           <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
-            <label className={styles.fieldLabel}>KPI name</label>
-            <input className={styles.fieldInput} value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Access Review Completion" />
+            <label className={styles.fieldLabel}>KPI name <span style={{ color: "rgba(221,215,234,0.4)" }}>(pick a suggestion for the selected framework, or type your own)</span></label>
+            <input list="kpi-name-suggestions" className={styles.fieldInput} value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Access Review Completion" />
+            <datalist id="kpi-name-suggestions">
+              {(KPI_NAME_SUGGESTIONS[frameworkTag] ?? KPI_NAME_SUGGESTIONS["All frameworks"]).map((n) => <option key={n} value={n} />)}
+            </datalist>
           </div>
           <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
             <div className={styles.field}>
@@ -244,14 +262,12 @@ export default function KpiClient({ data }: { data: KpiData }) {
 
   const maturityLabels = ["", "Initial", "Developing", "Defined", "Managed", "Optimized"];
 
-  // Framework "blocks" (spec §5): show a clickable tile only for frameworks the
-  // org actually uses — those tagged on its risk register, or that have a defined
-  // KPI. Built-in families (ISO 31000, NIST NRF) also appear when tagged, or as a
-  // fallback when nothing is tagged yet. Clicking a block reveals just that
-  // framework's KPIs instead of showing every framework at once.
-  const hasTags = data.activeFrameworks.length > 0;
-  const isoActive = !hasTags || data.activeFrameworks.includes("ISO 31000");
-  const nistActive = !hasTags || data.activeFrameworks.includes("NIST NRF");
+  // Framework "blocks" (spec §5): the org's ASSIGNED framework always gets a block.
+  // ISO 31000 / NIST NRF are add-on frameworks — shown ONLY when explicitly tagged
+  // on the risk register, never as a default (per CEO: hide unless chosen). Clicking
+  // a block reveals just that framework's KPIs.
+  const isoActive = data.activeFrameworks.includes("ISO 31000");
+  const nistActive = data.activeFrameworks.includes("NIST NRF");
 
   const manualByFw = new Map<string, KpiDefinition[]>();
   for (const k of data.kpiDefinitions) {
@@ -261,8 +277,9 @@ export default function KpiClient({ data }: { data: KpiData }) {
   const crossKpis = manualByFw.get("All Frameworks") ?? []; // apply to every block
 
   const blockNames: string[] = [];
-  if (isoActive) blockNames.push("ISO 31000");
-  if (nistActive) blockNames.push("NIST NRF");
+  if (data.assignedFramework) blockNames.push(data.assignedFramework);
+  if (isoActive && !blockNames.includes("ISO 31000")) blockNames.push("ISO 31000");
+  if (nistActive && !blockNames.includes("NIST NRF")) blockNames.push("NIST NRF");
   for (const key of manualByFw.keys()) if (key !== "All Frameworks" && !blockNames.includes(key)) blockNames.push(key);
   if (blockNames.length === 0 && crossKpis.length > 0) blockNames.push("All Frameworks");
 

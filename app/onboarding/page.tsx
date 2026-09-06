@@ -30,6 +30,7 @@ interface OrgProfile {
   business_size: string;
   annual_revenue: number;
   employee_count: number;
+  processes_eu_data: boolean;
 }
 
 const SENSITIVITY_LABELS: Record<number, string> = {
@@ -68,6 +69,7 @@ export default function OnboardingPage() {
     business_size: "small",
     annual_revenue: 0,
     employee_count: 0,
+    processes_eu_data: false,
   });
 
   useEffect(() => {
@@ -100,6 +102,10 @@ export default function OnboardingPage() {
   const firstUnansweredDomainIndex = domains.findIndex((d) =>
     questions.filter((q) => (q.domain ?? "General") === d).some((q) => !answers[answerKey(q)])
   );
+  // A section is "done" only when every one of its questions is answered — not
+  // because you've navigated past it. Drives the ✓ / done state on the step tabs.
+  const isDomainComplete = (domainName: string) =>
+    questions.filter((q) => (q.domain ?? "General") === domainName).every((q) => answers[answerKey(q)]);
 
   function answerKey(q: Question) {
     return `${q.question_id}_${q.framework_id}`;
@@ -237,10 +243,10 @@ export default function OnboardingPage() {
               {domains.map((d, i) => (
                 <button
                   key={d}
-                  className={`${styles.stepTab} ${i === step ? styles.stepTabActive : ""} ${i < step ? styles.stepTabDone : ""}`}
+                  className={`${styles.stepTab} ${i === step ? styles.stepTabActive : ""} ${isDomainComplete(d) ? styles.stepTabDone : ""}`}
                   onClick={() => setStep(i)}
                 >
-                  {i < step && <span className={styles.checkIcon}>✓</span>}
+                  {isDomainComplete(d) && <span className={styles.checkIcon}>✓</span>}
                   <span className={styles.stepNum}>{i + 1}</span>
                   <span className={styles.stepName}>{d}</span>
                 </button>
@@ -467,6 +473,19 @@ function OrgProfileForm({
               value={profile.annual_revenue}
               onChange={(e) => onChange("annual_revenue", parseFloat(e.target.value) || 0)}
             />
+          </div>
+          <div className={styles.orgField} style={{ gridColumn: "1 / -1" }}>
+            <label className={styles.orgLabel} style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={profile.processes_eu_data}
+                onChange={(e) => onChange("processes_eu_data", e.target.checked)}
+              />
+              We process personal data of EU residents (subject to GDPR)
+            </label>
+            <p className={styles.orgFormHint} style={{ marginTop: "0.25rem" }}>
+              Only enable if GDPR applies to you — it adds EU regulatory-fine exposure (up to $2M) to your risk model.
+            </p>
           </div>
         </div>
       </div>

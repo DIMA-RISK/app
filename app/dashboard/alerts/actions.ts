@@ -22,6 +22,19 @@ export async function markAlertRead(alertId: string): Promise<{ error?: string }
   return {};
 }
 
+export async function markAlertUnread(alertId: string): Promise<{ error?: string }> {
+  const userId = await getAuthedUserId();
+  if (!userId) return { error: "Not authenticated" };
+
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from("alert_states")
+    .upsert({ user_id: userId, alert_id: alertId, read_at: null }, { onConflict: "user_id,alert_id" });
+
+  if (error) return { error: error.message };
+  return {};
+}
+
 export async function markAllAlertsRead(alertIds: string[]): Promise<{ error?: string }> {
   const userId = await getAuthedUserId();
   if (!userId) return { error: "Not authenticated" };

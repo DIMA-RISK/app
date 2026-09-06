@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { BarChart2, AlertTriangle, CheckCircle2, Clock, Download, RefreshCw, ArrowRight } from "lucide-react";
 import styles from "../dashboard.module.css";
 import { SeverityBadge, LabeledBadge, EFFORT_COLOR } from "./SeverityBadge";
+import { classifyRoi } from "../_lib/ale";
 import type { DashboardData } from "../queries";
 
 const ARC_LENGTH = 251.3;
@@ -71,14 +72,8 @@ function fmtCurrency(n: number, currency: string) {
   }).format(n);
 }
 
-function roiRecommendation(pct: number): { label: string; color: string } {
-  if (pct >= 300) return { label: "Exceptional", color: "#22c55e" };
-  if (pct >= 200) return { label: "Excellent", color: "#4ade80" };
-  if (pct >= 100) return { label: "Good", color: "#84cc16" };
-  if (pct >= 50) return { label: "Moderate", color: "#f59e0b" };
-  if (pct >= 0) return { label: "Low", color: "#f97316" };
-  return { label: "Negative", color: "#ef4444" };
-}
+// ROI classification lives in the shared engine (CEO's ROI-transparency spec):
+// never hide negative ROI — classify it by ratio and recommend an action.
 
 const INVESTMENT_LABELS: Record<string, string> = {
   technology_infrastructure: "Technology & Infrastructure",
@@ -200,7 +195,7 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
       ? "Low Risk"
       : "Not Scored";
 
-  const roiRec = data.roi ? roiRecommendation(data.roi.roiPct) : null;
+  const roiRec = data.roi ? classifyRoi(data.roi.roiPct) : null;
 
   const nextAction = data.tasks[0] ?? null;
 
@@ -527,8 +522,9 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
         <div className={`${styles.card} ${styles.mb15}`}>
           <div className={styles.cardHeader}>
             <h2 className={styles.cardTitleLg}>Return on Investment</h2>
-            <span className={styles.badge} style={{ background: `${roiRec.color}22`, color: roiRec.color, border: `1px solid ${roiRec.color}44` }}>
-              {roiRec.label}
+            <span className={styles.badge} title={`${roiRec.band} — ${roiRec.ratio.toFixed(1)}:1 (avoided loss per $1 spent)`}
+              style={{ background: `${roiRec.tone}22`, color: roiRec.tone, border: `1px solid ${roiRec.tone}44` }}>
+              {roiRec.indicator} {roiRec.band} · {roiRec.label}
             </span>
           </div>
 
@@ -541,9 +537,10 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             </div>
             <div className={styles.statCard}>
               <div className={styles.statCardTop}><span className={styles.statCardLabel}>ROI</span></div>
-              <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: roiRec.color }}>
+              <div className={styles.statCardValue} style={{ fontSize: "1.5rem", color: roiRec.tone }}>
                 {Math.round(data.roi.roiPct)}%
               </div>
+              <div className={styles.statCardSub} style={{ color: roiRec.tone }}>{roiRec.ratio.toFixed(1)}:1 avoided per $1</div>
             </div>
             <div className={styles.statCard}>
               <div className={styles.statCardTop}><span className={styles.statCardLabel}>Payback Period</span></div>
@@ -554,6 +551,22 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
               <div className={styles.statCardValue} style={{ fontSize: "1.5rem" }}>{fmtCurrency(data.roi.investmentTotal, data.currency)}</div>
             </div>
           </div>
+
+          {/* Sensitivity analysis — when the ratio is weak (<3:1), tell the CFO
+              what would need to change to make the case (CEO ROI-transparency spec). */}
+          {roiRec.ratio < 3 && (
+            <div style={{ padding: "0.85rem 1rem", background: `${roiRec.tone}0f`, border: `1px solid ${roiRec.tone}33`, borderRadius: 10, marginBottom: "1rem" }}>
+              <div style={{ fontWeight: 600, color: "#ddd7ea", fontSize: "0.82rem", marginBottom: "0.5rem" }}>
+                {roiRec.indicator} At {roiRec.ratio.toFixed(1)}:1, here&rsquo;s what would move the case:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "rgba(221,215,234,0.65)", fontSize: "0.78rem", lineHeight: 1.7 }}>
+                <li><strong>Loss estimate too low?</strong> Revalidate the ALE — is the incident probability understated?</li>
+                <li><strong>Remediation cost too high?</strong> Challenge the vendor quote or find a lower-cost control.</li>
+                <li><strong>Gap too small to move ROI?</strong> Consider whether partial remediation is acceptable, or if full closure is required.</li>
+                <li><strong>Regulatory requirement?</strong> If the control is mandatory, approve regardless of ROI and mandate a cost-optimisation review.</li>
+              </ul>
+            </div>
+          )}
 
           <hr className={styles.divider} />
           <div className={styles.grid2}>
@@ -600,6 +613,9 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
                 <h2 className={styles.cardTitleLg}>Risk Heatmap</h2>
                 <span className={`${styles.badge} ${styles.badgePurple}`}>{data.heatmapEntries.length} entries</span>
               </div>
+              <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.5)", margin: "-0.5rem 0 0.85rem", lineHeight: 1.5 }}>
+                Your <strong style={{ color: "rgba(221,215,234,0.7)" }}>risk-register entries</strong> plotted by likelihood (rows) × financial impact (columns). Each number is how many risks land in that cell.
+              </p>
               {/* 4×4 probability × impact grid */}
               {(() => {
                 const BANDS = ["low","medium","high","critical"] as const;
@@ -675,6 +691,9 @@ export default function ExecutiveSummary({ data }: { data: DashboardData }) {
             <h2 className={styles.cardTitleLg}>Risk Curve</h2>
             <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.4)" }}>likelihood × impact by domain maturity</span>
           </div>
+          <p className={styles.textXs} style={{ color: "rgba(221,215,234,0.5)", margin: "-0.5rem 0 0.85rem", lineHeight: 1.5 }}>
+            A different lens than the heatmap above: your <strong style={{ color: "rgba(221,215,234,0.7)" }}>control domains</strong> plotted by likelihood (derived from each domain&rsquo;s maturity) × impact (your data-sensitivity level) — not the individual register entries.
+          </p>
           {(() => {
             // Likelihood = 6 − maturity level (maturity 1 → likelihood 5 "Very Likely" … 5 → 1 "Rare")
             // Impact column = org data sensitivity level (1–5)

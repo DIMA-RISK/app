@@ -24,6 +24,7 @@ interface OrgProfile {
   business_size: string;
   annual_revenue: number;
   employee_count: number;
+  processes_eu_data: boolean;
 }
 
 export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: OrgProfile) {
@@ -60,6 +61,7 @@ export async function saveOnboardingAnswers(entries: AnswerEntry[], orgProfile: 
       business_size: orgProfile.business_size,
       annual_revenue: orgProfile.annual_revenue,
       employee_count: orgProfile.employee_count,
+      processes_eu_data: orgProfile.processes_eu_data,
     })
     .eq("user_id", user.id);
 
@@ -229,6 +231,56 @@ export async function rescoreWithScan() {
   await regenerateRoadmap(admin, user.id, session.id, session.framework_id);
 
   return { error: null };
+}
+
+// Edit questionnaire answers after submission (Questionnaire Review → "Edit
+// answers"). Admin-only. Updates only the responses (never the org profile), then
+// rescores + regenerates the roadmap. Works for the org owner and invited admins.
+export async function saveEditedAnswers(
+  edits: { questionId: number; response: "yes" | "no" | "partial" | "na" }[],
+): Promise<{ error?: string }> {
+  const user = await getAuthedUser();
+  if (!user) return { error: "Not authenticated" };
+  const admin = createAdminClient();
+
+  // Resolve the org owner's user_id + require admin role.
+  const { data: org } = await admin.from("organizations").select("user_id").eq("user_id", user.id).maybeSingle();
+  let ownerId = user.id;
+  if (!org) {
+    const { data: invite } = await admin
+      .from("org_invitations")
+      .select("role, organizations!inner(user_id)")
+      .eq("accepted_by", user.id).eq("status", "accepted").maybeSingle();
+    if (!invite) return { error: "Not authorized" };
+    if (invite.role !== "admin") return { error: "Viewers cannot edit answers" };
+    ownerId = (invite.organizations as unknown as { user_id: string }).user_id;
+  }
+
+  const { data: session } = await admin
+    .from("assessment_sessions")
+    .select("id, framework_id")
+    .eq("user_id", ownerId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!session) return { error: "No assessment session found" };
+
+  if (edits.length > 0) {
+    const rows = edits.map((e) => ({
+      session_id: session.id,
+      question_id: e.questionId,
+      framework_id: session.framework_id,
+      response: e.response,
+    }));
+    const { error } = await admin.from("questionnaire_responses").upsert(rows, { onConflict: "session_id,question_id,framework_id" });
+    if (error) return { error: error.message };
+  }
+
+  await admin.rpc("calculate_risk_score", { p_session_id: session.id });
+  await admin.rpc("calculate_financial_impact", { p_session_id: session.id });
+  await regenerateRoadmap(admin, ownerId, session.id, session.framework_id);
+
+  return {};
 }
 
 async function regenerateRoadmap(

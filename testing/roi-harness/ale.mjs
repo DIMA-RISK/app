@@ -7,7 +7,7 @@
 
 export const ARO_BASE = { phi_breach: 0.35, ransomware: 0.625, insider: 0.53, legacy: 0.45, third_party: 0.33, mobile_byod: 0.505 };
 export const EXPOSURE_FACTOR_BY_LEVEL = { 1: 0.05, 2: 0.10, 3: 0.25, 4: 0.50, 5: 0.80 }; // by SENSITIVITY level
-export const SENSITIVITY_WEIGHT = { 1: 0.6, 2: 0.6, 3: 1.0, 4: 1.5, 5: 1.5 };
+export const SENSITIVITY_WEIGHT = { 1: 0.3, 2: 0.4, 3: 0.6, 4: 1.0, 5: 1.5 }; // aligned to workbook v1.0
 export const MATURITY_WEIGHT = { 1: 2.0, 2: 1.5, 3: 1.0, 4: 0.6, 5: 0.3 };
 export const BASE_CONTROL_EFFORT = { "quick-win": 1, medium: 2, complex: 3 };
 
@@ -37,8 +37,8 @@ export function runGoldenChecks() {
   G("exposureFactor · L3", exposureFactor(3), 0.25);
   G("exposureFactor · L4", exposureFactor(4), 0.5);
   G("exposureFactor · L5", exposureFactor(5), 0.8);
-  // Sensitivity weight 5→3 mapping.
-  G("sensitivityWeight · L1/L3/L5", sensitivityWeight(1) + sensitivityWeight(3) + sensitivityWeight(5), 0.6 + 1.0 + 1.5);
+  // Sensitivity weight (workbook v1.0): L3=0.6, L4=1.0, L5=1.5.
+  G("sensitivityWeight · L3/L4/L5", sensitivityWeight(3) + sensitivityWeight(4) + sensitivityWeight(5), 0.6 + 1.0 + 1.5);
   // Maturity Weight (required multiplier) and Maturity Reduction %.
   G("maturityWeight · L1", maturityWeight(1), 2.0);
   G("maturityWeight · L5", maturityWeight(5), 0.3);
@@ -53,9 +53,9 @@ export function runGoldenChecks() {
   G("SLE · L4", sleL4, 218600);
   const alePhi = aleForThreat(av, "phi_breach", 4);     // × 0.35
   G("aleForThreat · PHI@L4", alePhi, 76510);
-  G("gapExposure · 40% gap, sensL4", gapExposure(alePhi, 40, 4), 45906);
-  // Priority: maturity L3 → weight 1.0, adjusted effort 1.2.
-  G("priorityScore · medium@L3", priorityScore(alePhi, 40, 4, "medium", 3), 45906 / 1.2);
+  G("gapExposure · 40% gap, sensL4", gapExposure(alePhi, 40, 4), 30604); // 76510 × 0.4 × 1.0
+  // Priority: sensWeight(L4)=1.0, maturity L3 → weight 1.0, adjusted effort 1.2.
+  G("priorityScore · medium@L3", priorityScore(alePhi, 40, 4, "medium", 3), 30604 / 1.2);
 
   return out;
 }

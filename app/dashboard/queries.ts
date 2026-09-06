@@ -339,6 +339,10 @@ export interface SettingsData {
   orgIp: string | null;
   patientRecords: number;
   vendorCount: number;
+  // The framework actually assigned to this org (from its assessment session),
+  // so the Active Frameworks panel reflects reality instead of a hardcoded list.
+  frameworkId: string | null;
+  frameworkName: string | null;
 }
 
 export async function getSettingsData(): Promise<SettingsData | null> {
@@ -346,12 +350,19 @@ export async function getSettingsData(): Promise<SettingsData | null> {
   if (!ctx) return null;
   const { userId } = ctx;
   const admin = createAdminClient();
-  const { data: org } = await admin
-    .from("organizations")
-    .select("org_name, email, p_number, industry, org_country, dba_name, org_ip, patient_records_count, vendor_count")
-    .eq("user_id", userId)
-    .single();
+  const [{ data: org }, { data: session }] = await Promise.all([
+    admin.from("organizations").select("org_name, email, p_number, industry, org_country, dba_name, org_ip, patient_records_count, vendor_count").eq("user_id", userId).single(),
+    admin.from("assessment_sessions").select("framework_id").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
   if (!org) return null;
+
+  const frameworkId = session?.framework_id ?? null;
+  let frameworkName: string | null = frameworkId ? frameworkId.toUpperCase() : null;
+  if (frameworkId) {
+    const { data: fw } = await admin.from("frameworks").select("name").eq("id", frameworkId).maybeSingle();
+    frameworkName = (fw as { name?: string } | null)?.name ?? frameworkName;
+  }
+
   return {
     orgName: org.org_name ?? "",
     email: org.email ?? "",
@@ -362,6 +373,8 @@ export async function getSettingsData(): Promise<SettingsData | null> {
     orgIp: org.org_ip ?? null,
     patientRecords: org.patient_records_count ?? 0,
     vendorCount: org.vendor_count ?? 0,
+    frameworkId,
+    frameworkName,
   };
 }
 
@@ -735,8 +748,12 @@ export interface KpiData {
   mttdCriticalHours: number | null;          // mean time to detect, critical severity
   mttdHighHours: number | null;              // mean time to detect, high severity
   // Framework tags present across the org's risk register — drives which KPI
-  // families surface (EWNAF spec 2.2). Empty = show all as fallback.
+  // families surface (EWNAF spec 2.2).
   activeFrameworks: string[];
+  // The org's assigned assessment framework (HIPAA/PIPEDA/…), always shown as its
+  // own KPI block. ISO 31000 / NIST NRF are add-on frameworks, shown only when
+  // explicitly tagged — not by default.
+  assignedFramework: string | null;
   role: "admin" | "viewer";
 }
 
@@ -750,7 +767,12 @@ export async function getKpiData(): Promise<KpiData | null> {
   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
   const { data: latestSession } = await admin.from("assessment_sessions")
-    .select("id").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle();
+    .select("id, framework_id").eq("user_id", userId).order("started_at", { ascending: false }).limit(1).maybeSingle();
+  let assignedFramework: string | null = latestSession?.framework_id ? latestSession.framework_id.toUpperCase() : null;
+  if (latestSession?.framework_id) {
+    const { data: fw } = await admin.from("frameworks").select("name").eq("id", latestSession.framework_id).maybeSingle();
+    assignedFramework = (fw as { name?: string } | null)?.name ?? assignedFramework;
+  }
 
   const [boardResult, riskEntriesResult, maturityResult, incidentsResult, orgResult, kpiDefsResult] = await Promise.all([
     admin.from("board_meetings").select("risk_agenda_item").eq("user_id", userId).gte("meeting_date", twelveMonthsAgo.toISOString().slice(0, 10)),
@@ -825,6 +847,7 @@ export async function getKpiData(): Promise<KpiData | null> {
     mttdCriticalHours: mttdHours("critical"),
     mttdHighHours: mttdHours("high"),
     activeFrameworks,
+    assignedFramework,
     role: ctx.role,
   };
 }
@@ -836,6 +859,7 @@ export interface AnalyticsData {
   risk: { likelihood: number; impact: number; control: number; exposure: number; total: number; band: string; };
   financial: { breachCost: number; finesMin: number; finesMax: number; totalMin: number; totalMax: number; currency: string; };
   compliancePct: number;
+  frameworkName: string | null;
 }
 
 export async function getAnalyticsData(): Promise<AnalyticsData | null> {
@@ -846,19 +870,21 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
 
   const { data: session } = await admin
     .from("assessment_sessions")
-    .select("id")
+    .select("id, framework_id")
     .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!session) return null;
 
-  const [maturityResult, riskResult, financialResult, responsesResult] = await Promise.all([
+  const [maturityResult, riskResult, financialResult, responsesResult, frameworkResult] = await Promise.all([
     admin.from("maturity_scores").select("domain, raw_score, maturity_level, label").eq("session_id", session.id),
     admin.from("risk_scores").select("total_score, risk_band, likelihood_score, impact_score, control_score, exposure_score").eq("session_id", session.id).maybeSingle(),
     admin.from("financial_impact").select("estimated_breach_cost, regulatory_fines_min, regulatory_fines_max, total_exposure_min, total_exposure_max, currency").eq("session_id", session.id).maybeSingle(),
     admin.from("questionnaire_responses").select("response").eq("session_id", session.id),
+    session.framework_id ? admin.from("frameworks").select("name").eq("id", session.framework_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
+  const frameworkName = (frameworkResult.data as { name?: string } | null)?.name ?? session.framework_id?.toUpperCase() ?? null;
 
   const responses = responsesResult.data ?? [];
   const applicable = responses.filter((r) => r.response !== "na").length;
@@ -889,6 +915,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       currency: f?.currency ?? "CAD",
     },
     compliancePct,
+    frameworkName,
   };
 }
 
@@ -1076,6 +1103,7 @@ export interface RiskRegisterEntry {
   probabilityAfterBand: "low" | "medium" | "high" | "critical" | null;
   treatmentCost: number | null;
   roiPct: number | null;
+  mandatory: boolean;
   createdAt: string;
 }
 
@@ -1149,6 +1177,7 @@ export async function getRiskRegisterData(): Promise<RiskRegisterData | null> {
       probabilityAfterBand: r.probability_after_band ?? null,
       treatmentCost: r.treatment_cost != null ? Number(r.treatment_cost) : null,
       roiPct,
+      mandatory: !!(r as { mandatory?: boolean }).mandatory,
       createdAt: r.created_at,
     };
   });
@@ -1232,6 +1261,7 @@ export interface QuestionnaireData {
   frameworkId: string;
   domains: QuestionnaireDomain[];
   summary: { yes: number; no: number; partial: number; na: number; total: number; };
+  role: "admin" | "viewer";
 }
 
 export async function getQuestionnaireData(): Promise<QuestionnaireData | null> {
@@ -1288,6 +1318,7 @@ export async function getQuestionnaireData(): Promise<QuestionnaireData | null> 
       na: responses.filter((r) => r.response === "na").length,
       total: responses.length,
     },
+    role: ctx.role,
   };
 }
 

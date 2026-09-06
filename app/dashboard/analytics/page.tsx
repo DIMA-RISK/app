@@ -43,7 +43,7 @@ export default async function AnalyticsPage() {
           { label: "Risk Score", value: `${data.risk.total}`, sub: data.risk.band, color: bandColor },
           { label: "Compliance Rate", value: `${data.compliancePct}%`, sub: "controls met", color: "#22c55e" },
           { label: "Financial Exposure", value: fmt(data.financial.totalMin), sub: `up to ${fmt(data.financial.totalMax)}`, color: "#f59e0b" },
-          { label: "Domains Assessed", value: `${data.domains.length}`, sub: "PIPEDA domains", color: "#9b7de2" },
+          { label: "Domains Assessed", value: `${data.domains.length}`, sub: `${data.frameworkName ?? "framework"} domains`, color: "#9b7de2" },
         ].map(({ label, value, sub, color }) => (
           <div key={label} className={styles.statCard}>
             <div className={styles.statCardTop}><span className={styles.statCardLabel}>{label}</span></div>

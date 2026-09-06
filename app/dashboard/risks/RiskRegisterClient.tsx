@@ -9,6 +9,8 @@ import {
   type RiskEntryInput, type RiskCategory, type ProbabilityBand, type TreatmentStatus,
 } from "./actions";
 import { SeverityBadge } from "../_components/SeverityBadge";
+import { RISK_CATEGORIES, risksByCategory, RISK_CATALOG } from "./riskCatalog";
+import { classifyRoi, roadmapRecommendation } from "../_lib/ale";
 import styles from "../dashboard.module.css";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -18,7 +20,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const PROBABILITY_LABELS: Record<string, string> = { low: "Low", medium: "Medium", high: "High", critical: "Critical" };
 const PROBABILITY_MIDPOINT: Record<string, number> = { low: 0.10, medium: 0.35, high: 0.65, critical: 0.90 };
 const STATUS_LABELS: Record<string, string> = { untreated: "Untreated", in_progress: "In Progress", done: "Done" };
-const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "PIPEDA", "HIPAA", "GDPR"];
+const FRAMEWORK_OPTIONS = ["ISO 31000", "NIST NRF", "PIPEDA", "HIPAA", "GDPR", "CA-Health"];
 
 // Flat statutory-cap fine tiers (EWNAF spec §4.3) — same ceilings the corrected
 // ROI fine math uses (ADDENDUM 21). Regulatory impact suggestion = the largest
@@ -53,12 +55,16 @@ function computeRoiOfTreatment(rows: RiskRegisterEntry[]): number | null {
 }
 
 function exportCsv(entries: RiskRegisterEntry[]) {
-  const headers = ["Risk", "Category", "Division", "Owner", "Framework Tags", "Probability", "Financial Impact", "Annualized Exposure", "Outside Appetite", "Treatment Status"];
-  const rows = entries.map((e) => [
-    e.title, CATEGORY_LABELS[e.category] ?? e.category, e.division ?? "", e.owner ?? "", e.frameworkTags.join("; "),
-    PROBABILITY_LABELS[e.probabilityBand] ?? e.probabilityBand, String(e.financialImpact), String(Math.round(e.exposure)),
-    e.outsideAppetite ? "Yes" : "No", STATUS_LABELS[e.treatmentStatus] ?? e.treatmentStatus,
-  ]);
+  const headers = ["Risk", "Category", "Division", "Owner", "Framework Tags", "Probability", "Financial Impact", "Annualized Exposure", "Outside Appetite", "Treatment Status", "Mandatory", "Treatment ROI", "Recommendation"];
+  const rows = entries.map((e) => {
+    const rec = e.mandatory ? "Implement (mandatory)" : e.roiPct != null ? roadmapRecommendation(e.roiPct, false).action : "—";
+    return [
+      e.title, CATEGORY_LABELS[e.category] ?? e.category, e.division ?? "", e.owner ?? "", e.frameworkTags.join("; "),
+      PROBABILITY_LABELS[e.probabilityBand] ?? e.probabilityBand, String(e.financialImpact), String(Math.round(e.exposure)),
+      e.outsideAppetite ? "Yes" : "No", STATUS_LABELS[e.treatmentStatus] ?? e.treatmentStatus,
+      e.mandatory ? "Yes" : "No", e.roiPct != null ? `${Math.round(e.roiPct)}%` : "—", rec,
+    ];
+  });
   const csv = [headers, ...rows].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -79,7 +85,8 @@ function EntryModal({
 }) {
   const isNew = !entry;
   const [title, setTitle] = useState(entry?.title ?? "");
-  const [category, setCategory] = useState<RiskCategory>((entry?.category as RiskCategory) ?? "operational");
+  const [category, setCategory] = useState<RiskCategory>((entry?.category as RiskCategory) ?? RISK_CATEGORIES[0]);
+  const [selectedRiskId, setSelectedRiskId] = useState("");
   const [probabilityBand, setProbabilityBand] = useState<ProbabilityBand>(entry?.probabilityBand ?? "medium");
   const [frameworkTags, setFrameworkTags] = useState<string[]>(entry?.frameworkTags ?? []);
   // New risks pre-fill all three impact sub-fields with editable smart defaults;
@@ -98,10 +105,28 @@ function EntryModal({
   const [treatmentStatus, setTreatmentStatus] = useState<TreatmentStatus>(entry?.treatmentStatus ?? "untreated");
   const [probabilityAfterBand, setProbabilityAfterBand] = useState<ProbabilityBand | "">(entry?.probabilityAfterBand ?? "");
   const [treatmentCost, setTreatmentCost] = useState(entry?.treatmentCost ?? 0);
+  const [mandatory, setMandatory] = useState(entry?.mandatory ?? false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const regSuggestion = suggestRegulatory(frameworkTags);
+  // Category dropdown always includes the org's stored value (legacy entries may
+  // predate the healthcare category set).
+  const categoryOptions = RISK_CATEGORIES.includes(category) ? RISK_CATEGORIES : [category, ...RISK_CATEGORIES];
+
+  // Picking a predefined risk prefills description + frameworks (CEO answers 2/4:
+  // the numeric fields — asset value, exposure, gap — come from the org's
+  // assessment, so financial impact keeps the existing records×cost suggestion,
+  // and probability stays at the Medium default).
+  function pickPredefinedRisk(id: string) {
+    setSelectedRiskId(id);
+    if (!id || id === "__custom__") return;
+    const risk = RISK_CATALOG.find((r) => r.id === id);
+    if (!risk) return;
+    setTitle(risk.description);
+    setFrameworkTags(risk.frameworks);
+    if (regPrefilled) setImpactRegulatory(suggestRegulatory(risk.frameworks));
+  }
 
   function toggleFramework(tag: string) {
     setFrameworkTags((prev) => {
@@ -116,6 +141,16 @@ function EntryModal({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Guard: a treatment must actually lower the probability, otherwise the ROI
+    // is meaningless/negative (cost spent to avoid $0). Block equal-or-higher.
+    if (treatmentStatus !== "untreated" && probabilityAfterBand) {
+      const before = PROBABILITY_MIDPOINT[probabilityBand] ?? 0;
+      const after = PROBABILITY_MIDPOINT[probabilityAfterBand] ?? 0;
+      if (after >= before) {
+        setError(`Probability after treatment (${PROBABILITY_LABELS[probabilityAfterBand]}) must be lower than before (${PROBABILITY_LABELS[probabilityBand]}) — a treatment that doesn't reduce likelihood has no ROI.`);
+        return;
+      }
+    }
     const input: RiskEntryInput = {
       title,
       category,
@@ -129,6 +164,7 @@ function EntryModal({
       treatment_status: treatmentStatus,
       probability_after_band: treatmentStatus !== "untreated" && probabilityAfterBand ? probabilityAfterBand : null,
       treatment_cost: treatmentStatus !== "untreated" && treatmentCost ? Number(treatmentCost) : null,
+      mandatory,
     };
     startTransition(async () => {
       const res = entry ? await updateRiskEntry(entry.id, input) : await createRiskEntry(input);
@@ -163,6 +199,34 @@ function EntryModal({
         </div>
 
         <form onSubmit={handleSubmit}>
+          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Category</label>
+              <select className={styles.fieldSelect} value={category} onChange={(e) => { setCategory(e.target.value); setSelectedRiskId(""); }}>
+                {categoryOptions.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>)}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Probability</label>
+              <select className={styles.fieldSelect} value={probabilityBand} onChange={(e) => setProbabilityBand(e.target.value as ProbabilityBand)}>
+                {Object.entries(PROBABILITY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Predefined risk catalog (filtered by category) — pick one to prefill,
+              or choose Custom / just type in the description box below. */}
+          <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
+            <label className={styles.fieldLabel}>
+              Predefined risk <span style={{ color: "rgba(221,215,234,0.4)" }}>(optional — or type your own below)</span>
+            </label>
+            <select className={styles.fieldSelect} value={selectedRiskId} onChange={(e) => pickPredefinedRisk(e.target.value)}>
+              <option value="">— Choose a predefined {category} risk —</option>
+              {risksByCategory(category).map((r) => <option key={r.id} value={r.id}>{r.description}</option>)}
+              <option value="__custom__">Custom risk (enter manually)</option>
+            </select>
+          </div>
+
           <div className={styles.field} style={{ marginBottom: "0.85rem" }}>
             <label className={styles.fieldLabel}>Risk description</label>
             <input
@@ -172,21 +236,6 @@ function EntryModal({
               required
               placeholder="e.g. Unencrypted backups stored offsite"
             />
-          </div>
-
-          <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel}>Category</label>
-              <select className={styles.fieldSelect} value={category} onChange={(e) => setCategory(e.target.value as RiskCategory)}>
-                {Object.entries(CATEGORY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel}>Probability</label>
-              <select className={styles.fieldSelect} value={probabilityBand} onChange={(e) => setProbabilityBand(e.target.value as ProbabilityBand)}>
-                {Object.entries(PROBABILITY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </div>
           </div>
 
           <p className={styles.fieldLabel} style={{ marginBottom: "0.4rem" }}>Financial impact (CAD)</p>
@@ -249,6 +298,15 @@ function EntryModal({
             </div>
           </div>
 
+          {/* Mandatory override — a legally-required control is implemented
+              regardless of ROI (CEO ROI-transparency spec). */}
+          <label className={styles.field} style={{ marginBottom: "0.85rem", flexDirection: "row", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={mandatory} onChange={(e) => setMandatory(e.target.checked)} />
+            <span className={styles.fieldLabel} style={{ margin: 0 }}>
+              Mandatory — regulatory requirement <span style={{ color: "rgba(221,215,234,0.4)" }}>(recommend Implement regardless of ROI)</span>
+            </span>
+          </label>
+
           <div className={styles.grid2} style={{ marginBottom: "0.85rem" }}>
             <div className={styles.field}>
               <label className={styles.fieldLabel}>Division</label>
@@ -280,6 +338,12 @@ function EntryModal({
                 <label className={styles.fieldLabel}>Cost of treatment (CAD)</label>
                 <input type="number" min={0} className={styles.fieldInput} value={treatmentCost} onChange={(e) => setTreatmentCost(Number(e.target.value))} />
               </div>
+              {/* Live guard: after must be lower than before, or ROI is negative. */}
+              {probabilityAfterBand && (PROBABILITY_MIDPOINT[probabilityAfterBand] ?? 0) >= (PROBABILITY_MIDPOINT[probabilityBand] ?? 0) && (
+                <p className={styles.textXs} style={{ gridColumn: "1 / -1", color: "#fbbf24", margin: 0 }}>
+                  ⚠ &ldquo;After&rdquo; probability isn&rsquo;t lower than &ldquo;before&rdquo; — this treatment reduces risk by 0, so ROI will be negative. Lower it to reflect the risk reduction.
+                </p>
+              )}
             </div>
           )}
 
@@ -491,13 +555,14 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
                 <th>Annualized Exposure</th>
                 <th>Appetite</th>
                 <th>Status</th>
+                <th>Recommendation</th>
                 {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={canEdit ? 10 : 9} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>
+                  <td colSpan={canEdit ? 11 : 10} style={{ textAlign: "center", color: "rgba(221,215,234,0.35)", padding: "2rem" }}>
                     No risks match this filter.{canEdit ? " Click \"Add Risk\" to create one." : ""}
                   </td>
                 </tr>
@@ -528,6 +593,18 @@ export default function RiskRegisterClient({ data }: { data: RiskRegisterData })
                     <span className={`${styles.badge} ${e.treatmentStatus === "done" ? styles.badgeGreen : e.treatmentStatus === "in_progress" ? styles.badgeMedium : styles.badgeGray}`}>
                       {STATUS_LABELS[e.treatmentStatus] ?? e.treatmentStatus}
                     </span>
+                  </td>
+                  <td>
+                    {(() => {
+                      // ROI-driven recommendation with the Mandatory override.
+                      if (e.mandatory) {
+                        return <span className={styles.badge} title="Regulatory requirement — implement regardless of ROI" style={{ background: "rgba(96,165,250,0.12)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.3)" }}>Implement · mandatory</span>;
+                      }
+                      if (e.roiPct == null) return <span className={styles.textXs} style={{ color: "rgba(221,215,234,0.35)" }}>—</span>;
+                      const rec = roadmapRecommendation(e.roiPct, false);
+                      const cls = classifyRoi(e.roiPct);
+                      return <span className={styles.badge} title={`${cls.band} · ${cls.ratio.toFixed(1)}:1 — ${rec.reason}`} style={{ background: `${rec.tone}1f`, color: rec.tone, border: `1px solid ${rec.tone}55`, cursor: "help" }}>{rec.action}</span>;
+                    })()}
                   </td>
                   {canEdit && (
                     <td>

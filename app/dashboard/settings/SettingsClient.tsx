@@ -102,8 +102,13 @@ export default function SettingsClient({ data }: { data: SettingsData }) {
           <div className={styles.card}>
             <h2 className={`${styles.cardTitleLg} ${styles.mb1}`}>Active Frameworks</h2>
             {[
-              { name: "PIPEDA", desc: "Automatically assigned — Canadian Healthcare organization", active: true, locked: true },
-              { name: "HIPAA", desc: "Available for USA Healthcare organizations only", active: false, locked: false },
+              // The org's actual assigned framework (from its assessment) shown active;
+              // the others as available / coming-soon — no longer hardcoded to PIPEDA.
+              ...(data.frameworkName
+                ? [{ name: data.frameworkName, desc: `Automatically assigned — ${data.country} ${data.industry} organization`, active: true, locked: true }]
+                : []),
+              ...(data.frameworkId !== "hipaa" ? [{ name: "HIPAA", desc: "For USA Healthcare organizations", active: false, locked: false }] : []),
+              ...(data.frameworkId !== "pipeda" ? [{ name: "PIPEDA", desc: "For Canadian organizations", active: false, locked: false }] : []),
               { name: "SOC 2", desc: "Dataset not yet available", active: false, locked: true },
               { name: "Quebec Law 25", desc: "Dataset not yet available", active: false, locked: true },
             ].map((fw) => (

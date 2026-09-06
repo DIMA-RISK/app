@@ -3,7 +3,9 @@
 import { createAdminClient } from "../../../utils/supabase/admin";
 import { createClient } from "../../../utils/supabase/server";
 
-export type RiskCategory = "operational" | "financial" | "strategic" | "compliance" | "technology" | "reputational";
+// Free-form now: the 17 healthcare control categories (see riskCatalog.ts) plus
+// any future ones. The DB CHECK was dropped in ADDENDUM 25; validated in-app.
+export type RiskCategory = string;
 export type ProbabilityBand = "low" | "medium" | "high" | "critical";
 export type TreatmentStatus = "untreated" | "in_progress" | "done";
 
@@ -20,6 +22,7 @@ export interface RiskEntryInput {
   treatment_status: TreatmentStatus;
   probability_after_band: ProbabilityBand | null;
   treatment_cost: number | null;
+  mandatory: boolean;
 }
 
 async function resolveOwner(): Promise<{ ownerId: string; role: "admin" | "viewer" } | { error: string }> {
